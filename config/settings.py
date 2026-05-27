@@ -5,11 +5,17 @@ Django settings for config project.
 from pathlib import Path
 from datetime import timedelta
 
+import os
+import dj_database_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-z%66s$p0q_g0p!1fuailmx+1grx_h!4p377v-ql96@5m*#rw^!'
-
-DEBUG = False
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY"
+)
+DEBUG = os.environ.get(
+    "DEBUG"
+) == "True"
 
 ALLOWED_HOSTS = [".onrender.com"]
 
@@ -73,12 +79,14 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
 
+    'default': dj_database_url.parse(
+
+        os.environ.get(
+            "DATABASE_URL"
+        )
+    )
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -115,7 +123,9 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 APPEND_SLASH = True
 
-print("DB PATH =>", DATABASES['default']['NAME'])
+
+
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
