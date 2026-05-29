@@ -2,14 +2,8 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.mail import send_mail
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth.hashers import (
-    check_password,
-    make_password
-)
-
-from rest_framework_simplejwt.tokens import (
-    AccessToken
-)
+from django.contrib.auth.hashers import (check_password, make_password)
+from rest_framework_simplejwt.tokens import (AccessToken)
 
 from datetime import timedelta
 
@@ -481,6 +475,105 @@ def verify_otp(request):
 
             "message":
             "Password updated"
+
+        })
+
+    except Exception as e:
+
+        return Response({
+
+            "error":
+            str(e)
+
+        }, status=500)
+
+@api_view(['POST'])
+def send_welcome_otp(request):
+
+
+    try:
+
+        email = request.data.get(
+            "email",
+            ""
+        ).strip().lower()
+
+        otp = str(
+            random.randint(
+                100000,
+                999999
+            )
+        )
+
+        OTP_STORAGE[email] = otp
+
+        send_mail(
+
+            "Welcome OTP",
+
+            f"Votre code OTP est : {otp}",
+
+            None,
+
+            [email],
+
+            fail_silently=False
+        )
+
+        return Response({
+
+            "message":
+            "OTP envoyé"
+
+        })
+
+    except Exception as e:
+
+        return Response({
+
+            "error":
+            str(e)
+
+        }, status=500)
+    
+@api_view(['POST'])
+def verify_welcome_otp(request):
+
+    try:
+
+        email = request.data.get(
+            "email",
+            ""
+        ).strip().lower()
+
+        otp = request.data.get(
+            "otp"
+        )
+
+        if email not in OTP_STORAGE:
+
+            return Response({
+
+                "error":
+                "OTP not found"
+
+            }, status=400)
+
+        if OTP_STORAGE[email] != otp:
+
+            return Response({
+
+                "error":
+                "OTP incorrect"
+
+            }, status=400)
+
+        del OTP_STORAGE[email]
+
+        return Response({
+
+            "message":
+            "OTP verified"
 
         })
 

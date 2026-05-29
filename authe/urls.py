@@ -5,8 +5,11 @@ from .views import (
     register_admin,
     forgot_password,
     send_otp,
-    verify_otp
+    verify_otp,
+    send_welcome_otp,
+    verify_welcome_otp,
 )
+
 
 urlpatterns = [
 
@@ -34,4 +37,14 @@ urlpatterns = [
         'verify-otp/',
         verify_otp
     ),
+
+    path(
+    'send-welcome-otp/',
+    send_welcome_otp
+),
+    path(
+    'verify-welcome-otp/',
+     verify_welcome_otp
+
+),
 ]
