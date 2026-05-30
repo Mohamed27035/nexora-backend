@@ -488,8 +488,8 @@ def verify_otp(request):
         }, status=500)
 
 @api_view(['POST'])
+@api_view(['POST'])
 def send_welcome_otp(request):
-
 
     try:
 
@@ -507,23 +507,17 @@ def send_welcome_otp(request):
 
         OTP_STORAGE[email] = otp
 
-        send_mail(
-
-            "Welcome OTP",
-
-            f"Votre code OTP est : {otp}",
-
-            None,
-
-            [email],
-
-            fail_silently=False
+        print(
+            f"OTP for {email} => {otp}"
         )
 
         return Response({
 
             "message":
-            "OTP envoyé"
+            "OTP envoyé",
+
+            "otp":
+            otp
 
         })
 
