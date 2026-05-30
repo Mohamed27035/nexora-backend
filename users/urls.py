@@ -36,6 +36,8 @@ from .views import (
     check_admin_exists
     
 )
+from .views import register_client
+
 
 urlpatterns = [
 
@@ -168,5 +170,10 @@ path(
 path(
     "timeline/",
     get_activity_timeline
+),
+
+path(
+    "register/",
+    register_client
 ),
 ]
