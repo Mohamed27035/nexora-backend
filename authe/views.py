@@ -1,8 +1,10 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.mail import send_mail
+from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import (check_password, make_password)
+from django.utils.crypto import get_random_string
 from rest_framework_simplejwt.tokens import (AccessToken)
 
 from datetime import timedelta
@@ -10,6 +12,9 @@ from datetime import timedelta
 from users.models import Utilisateur
 
 import random
+
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
 
 
 OTP_STORAGE = {}
@@ -180,7 +185,7 @@ def register_admin(request):
         return Response({
 
             "message":
-            "Compte ADMIN créé",
+            "Compte ADMIN crÃ©Ã©",
 
             "id":
             user.id
@@ -268,7 +273,7 @@ def register(request):
         return Response({
 
             "message":
-            "Compte CLIENT créé",
+            "Compte CLIENT crÃ©Ã©",
 
             "id":
             user.id
@@ -397,7 +402,7 @@ def send_otp(request):
         return Response({
 
             "message":
-            "OTP envoyé"
+            "OTP envoyÃ©"
 
         })
 
@@ -488,7 +493,6 @@ def verify_otp(request):
         }, status=500)
 
 @api_view(['POST'])
-@api_view(['POST'])
 def send_welcome_otp(request):
 
     try:
@@ -514,7 +518,7 @@ def send_welcome_otp(request):
         return Response({
 
             "message":
-            "OTP envoyé",
+            "OTP envoyÃ©",
 
             "otp":
             otp
@@ -579,3 +583,146 @@ def verify_welcome_otp(request):
             str(e)
 
         }, status=500)
+
+# ==========================================
+# SSO GOOGLE (ID TOKEN -> JWT)
+# ==========================================
+
+@api_view(['POST'])
+def sso_google(request):
+
+    if not getattr(settings, "GOOGLE_OAUTH2_CLIENT_ID", ""):
+
+        return Response({
+
+            "error":
+            "SSO not configured (missing GOOGLE_OAUTH2_CLIENT_ID)"
+
+        }, status=500)
+
+    token = request.data.get(
+        "id_token",
+        ""
+    ).strip()
+
+    if not token:
+
+        return Response({
+
+            "error":
+            "id_token is required"
+
+        }, status=400)
+
+    try:
+
+        info = google_id_token.verify_oauth2_token(
+
+            token,
+
+            google_requests.Request(),
+
+            settings.GOOGLE_OAUTH2_CLIENT_ID,
+        )
+
+    except Exception:
+
+        return Response({
+
+            "error":
+            "Invalid Google token"
+
+        }, status=401)
+
+    email = (info.get(
+        "email"
+    ) or "").strip().lower()
+
+    if not email:
+
+        return Response({
+
+            "error":
+            "Google token missing email"
+
+        }, status=400)
+
+    user = Utilisateur.objects.filter(
+        email__iexact=email
+    ).first()
+
+    if not user:
+
+        user = Utilisateur.objects.create(
+
+            nom=(info.get(
+                "family_name"
+            ) or info.get(
+                "name"
+            ) or "").strip() or "GoogleUser",
+
+            prenom=(info.get(
+                "given_name"
+            ) or "").strip() or None,
+
+            email=email,
+
+            password=make_password(
+                get_random_string(
+                    48
+                )
+            ),
+
+            role="CLIENT",
+
+            is_verified=True,
+        )
+
+    if user.is_banned:
+
+        return Response({
+
+            "error":
+            "Compte banni"
+
+        }, status=403)
+
+    if user.is_suspended:
+
+        return Response({
+
+            "error":
+            "Compte suspendu"
+
+        }, status=403)
+
+    refresh = RefreshToken.for_user(
+        user
+    )
+
+    return Response({
+
+        "access":
+        str(refresh.access_token),
+
+        "refresh":
+        str(refresh),
+
+        "user": {
+
+            "id":
+            user.id,
+
+            "nom":
+            user.nom,
+
+            "prenom":
+            user.prenom,
+
+            "email":
+            user.email,
+
+            "role":
+            user.role,
+        }
+    })

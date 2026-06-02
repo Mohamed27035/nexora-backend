@@ -8,6 +8,7 @@ from .views import (
     verify_otp,
     send_welcome_otp,
     verify_welcome_otp,
+    sso_google,
 )
 
 
@@ -39,12 +40,17 @@ urlpatterns = [
     ),
 
     path(
-    'send-welcome-otp/',
-    send_welcome_otp
-),
-    path(
-    'verify-welcome-otp/',
-     verify_welcome_otp
+        'send-welcome-otp/',
+        send_welcome_otp
+    ),
 
-),
+    path(
+        'verify-welcome-otp/',
+        verify_welcome_otp
+    ),
+
+    path(
+        'sso/google/',
+        sso_google
+    ),
 ]

@@ -1647,3 +1647,53 @@ def get_activity_timeline(request):
     return Response(
         timeline[:40]
     )
+
+
+
+@api_view(['POST'])
+def register_client(request):
+
+    try:
+
+        email = request.data.get(
+            "email",
+            ""
+        ).strip().lower()
+
+        if Utilisateur.objects.filter(
+            email=email
+        ).exists():
+
+            return Response({
+                "error": "Email already exists"
+            }, status=400)
+
+        user = Utilisateur.objects.create(
+
+            nom=request.data.get("nom"),
+
+            prenom="",
+
+            telephone="",
+
+            bio="",
+
+            email=email,
+
+            password=make_password(
+                request.data.get("password")
+            ),
+
+            role="CLIENT"
+        )
+
+        return Response({
+            "message": "Compte créé",
+            "id": user.id
+        }, status=201)
+
+    except Exception as e:
+
+        return Response({
+            "error": str(e)
+        }, status=500)

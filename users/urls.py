@@ -1,4 +1,5 @@
 from django.urls import path
+
 from .views import (
     get_activity_timeline,
 )
@@ -176,4 +177,7 @@ path(
     "register/",
     register_client
 ),
+
 ]
+
+
