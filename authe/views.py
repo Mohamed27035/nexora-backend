@@ -383,6 +383,8 @@ def send_otp(request):
 
         OTP_STORAGE[email] = otp
 
+        print("BEFORE SEND MAIL")
+
         # ==========================
         # SEND EMAIL
         # ==========================
@@ -399,14 +401,21 @@ def send_otp(request):
             fail_silently=False
         )
 
+        print("AFTER SEND MAIL")
+
         return Response({
 
             "message":
-            "OTP envoyÃ©"
+            "OTP envoyé"
 
         })
 
     except Exception as e:
+
+        print(
+            "SEND OTP ERROR =>",
+            str(e)
+        )
 
         return Response({
 
