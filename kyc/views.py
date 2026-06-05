@@ -1,12 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.utils import timezone
-from .ocr_utils import (
-
-    extract_text_from_image,
-
-    parse_mauritanian_id
-)
 from .models import KYCRequest
 from .serializers import KYCRequestSerializer
 
@@ -58,6 +52,10 @@ def submit_kyc(request):
     if serializer.is_valid():
 
         kyc = serializer.save()
+        from .ocr_utils import (
+            extract_text_from_image,
+            parse_mauritanian_id
+        )
 # ==========================
         # OCR EXTRACTION
         # ==========================

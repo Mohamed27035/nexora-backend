@@ -5,8 +5,6 @@ from django.db.models.functions import TruncDate
 from logs.models import Log
 from users.views import get_current_user, is_admin, is_comptable
 from transactions.models import Transaction
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 from django.http import HttpResponse
 
 
@@ -66,6 +64,9 @@ def report_chart(request):
 # 📄 PDF محسّن
 @api_view(['GET'])
 def export_pdf(request):
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+
     user, error = get_current_user(request)
     if error:
         return error

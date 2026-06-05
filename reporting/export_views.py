@@ -1,23 +1,5 @@
 from django.http import HttpResponse
 from rest_framework.response import Response
-from io import BytesIO
-import openpyxl
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Table,
-    TableStyle,
-    Paragraph,
-    Spacer
-)
-
-from reportlab.lib import colors
-
-from reportlab.lib.styles import (
-    getSampleStyleSheet
-)
-
-from reportlab.lib.pagesizes import letter
-
 from transactions.models import Transaction
 
 from users.views import (
@@ -28,6 +10,16 @@ from users.views import (
 
 
 def export_transactions_pdf(request):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Table,
+        TableStyle,
+        Paragraph,
+        Spacer
+    )
 
     # ==========================
     # AUTH
@@ -210,6 +202,7 @@ def export_transactions_pdf(request):
     return response
 
 def export_transactions_excel(request):
+    import openpyxl
 
     # ==========================
     # AUTH

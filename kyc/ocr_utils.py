@@ -2,8 +2,6 @@ import re
 
 import pytesseract
 
-from PIL import Image
-
 
 # =====================================
 # EXTRACT TEXT
@@ -12,6 +10,7 @@ from PIL import Image
 def extract_text_from_image(
     image_path
 ):
+    from PIL import Image
 
     try:
 

@@ -3,4 +3,4 @@ services:
     name: nexora-api
     env: python
     buildCommand: "./build.sh"
-    startCommand: "gunicorn config.wsgi:application"
+    startCommand: "gunicorn config.wsgi:application --workers 1 --threads 2 --timeout 120"
