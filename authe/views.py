@@ -185,7 +185,7 @@ def register_admin(request):
         return Response({
 
             "message":
-            "Compte ADMIN crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+            "Compte ADMIN crÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
             "id":
             user.id
@@ -273,7 +273,7 @@ def register(request):
         return Response({
 
             "message":
-            "Compte CLIENT crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+            "Compte CLIENT crÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
             "id":
             user.id
@@ -417,7 +417,7 @@ def send_otp(request):
         return Response({
 
             "message":
-            "OTP envoyÃƒÆ’Ã‚Â©"
+            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
 
         })
 
@@ -538,7 +538,7 @@ def send_welcome_otp(request):
         return Response({
 
             "message":
-            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
             "otp":
             otp

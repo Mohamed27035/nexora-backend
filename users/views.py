@@ -6,6 +6,7 @@ from notifications.models import Notification
 
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
+from django.conf import settings
 import random
 from transactions.models import Transaction
 from email_service.services import send_system_email, ResendEmailError
@@ -103,7 +104,7 @@ def create_log(user, action, target=None):
 
                 utilisateur=user,
 
-                title="ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Security Alert",
+                title="ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Security Alert",
 
                 message=(
                     f"Suspicious action detected: {action}"
@@ -119,7 +120,7 @@ def create_log(user, action, target=None):
             e
         )
         send_live_notification(
-    f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Suspicious action detected: {action}"
+    f"ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Suspicious action detected: {action}"
 )
 
 # =====================================================
@@ -137,6 +138,10 @@ def send_otp_email(user):
         user.otp_code = otp
 
         user.save()
+
+        if settings.DEMO_OTP_MODE:
+
+            return otp
 
         send_system_email(
             to_email=user.email,
@@ -337,7 +342,7 @@ def get_users(request):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     users = Utilisateur.objects.all()
@@ -409,7 +414,7 @@ def get_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     try:
@@ -488,7 +493,7 @@ def create_user(request):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     data = request.data.copy()
@@ -549,7 +554,7 @@ def update_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -623,7 +628,7 @@ def delete_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -646,7 +651,7 @@ def delete_user(request, id):
 
     return Response({
         "message":
-        "Utilisateur supprimÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+        "Utilisateur supprimÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
     })
 
 
@@ -675,7 +680,7 @@ def get_logs(request):
     ):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     # ==========================
@@ -796,7 +801,7 @@ def get_audit(request):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     logs = Log.objects.all()
@@ -1021,7 +1026,7 @@ def get_my_alerts(request):
     if logs.count() > 20:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â High activity detected"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â High activity detected"
         )
 
     if logs.filter(
@@ -1029,7 +1034,7 @@ def get_my_alerts(request):
     ).count() > 3:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â¨ Suspicious deletions"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Suspicious deletions"
         )
 
     if logs.filter(
@@ -1037,7 +1042,7 @@ def get_my_alerts(request):
     ).count() > 10:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Too many logins"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many logins"
         )
 
     return Response({
@@ -1102,7 +1107,7 @@ def detect_anomalies(request):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     logs = Log.objects.all()
@@ -1112,7 +1117,7 @@ def detect_anomalies(request):
     if logs.count() > 100:
 
         anomalies.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â High system activity"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â High system activity"
         )
 
     if logs.filter(
@@ -1120,7 +1125,7 @@ def detect_anomalies(request):
     ).count() > 5:
 
         anomalies.append(
-            "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â¨ Too many deletions"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Too many deletions"
         )
 
     if logs.filter(
@@ -1128,7 +1133,7 @@ def detect_anomalies(request):
     ).count() > 20:
 
         anomalies.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Too many logins"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many logins"
         )
 
     return Response({
@@ -1169,19 +1174,19 @@ def detect_suspicious_behavior(request):
     if total > 30:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Unusual high activity"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Unusual high activity"
         )
 
     if deletes > 3:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â¨ Suspicious delete behavior"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Suspicious delete behavior"
         )
 
     if logins > 10:
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Too many login attempts"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many login attempts"
         )
 
     actions = logs.values_list(
@@ -1196,7 +1201,7 @@ def detect_suspicious_behavior(request):
     ):
 
         alerts.append(
-            "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â¨ More deletes than creates"
+            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ More deletes than creates"
         )
     # ==========================
     # SECURITY NOTIFICATIONS
@@ -1232,7 +1237,7 @@ def suspend_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -1254,7 +1259,7 @@ def suspend_user(request, id):
 
         title="Compte suspendu",
 
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© suspendu",
+        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© suspendu",
 
         type="warning"
     )
@@ -1262,7 +1267,7 @@ def suspend_user(request, id):
     send_live_notification
 )
     send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© suspendu"
+    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© suspendu"
 )
     create_log(
         current_user,
@@ -1286,7 +1291,7 @@ def activate_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -1308,9 +1313,9 @@ def activate_user(request, id):
 
         utilisateur=user,
 
-        title="Compte activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+        title="Compte activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
         type="success"
     )
@@ -1322,13 +1327,13 @@ def activate_user(request, id):
     )
 
     return Response({
-        "message": "Utilisateur activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+        "message": "Utilisateur activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
     })
 from notifications.views import (
     send_live_notification
 )
 send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
 )
 @api_view(['POST'])
 def ban_user(request, id):
@@ -1343,7 +1348,7 @@ def ban_user(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -1366,7 +1371,7 @@ def ban_user(request, id):
 
         title="Compte banni",
 
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© banni",
+        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© banni",
 
         type="danger"
     )
@@ -1374,7 +1379,7 @@ def ban_user(request, id):
     send_live_notification
 )
     send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© banni"
+    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© banni"
 )
     create_log(
         current_user,
@@ -1399,7 +1404,7 @@ def change_role(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -1427,7 +1432,7 @@ def change_role(request, id):
     if role not in allowed_roles:
 
         return Response({
-            "error": "RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´le invalide"
+            "error": "RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le invalide"
         }, status=400)
 
     user.role = role
@@ -1438,9 +1443,9 @@ def change_role(request, id):
 
         utilisateur=user,
 
-        title="RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+        title="RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
-        message=f"Nouveau rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´le: {role}",
+        message=f"Nouveau rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le: {role}",
 
         type="info"
     )
@@ -1452,7 +1457,7 @@ def change_role(request, id):
     )
 
     return Response({
-        "message": "RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+        "message": "RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
     })
 
 @api_view(['POST'])
@@ -1468,7 +1473,7 @@ def reset_password(request, id):
     if not is_admin(current_user):
 
         return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©"
+            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
         }, status=403)
 
     user = Utilisateur.objects.filter(
@@ -1501,9 +1506,9 @@ def reset_password(request, id):
 
         utilisateur=user,
 
-        title="Mot de passe modifiÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+        title="Mot de passe modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
-        message="Votre mot de passe a ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© rÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©initialisÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+        message="Votre mot de passe a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©initialisÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
 
         type="warning"
     )
@@ -1567,12 +1572,19 @@ def forgot_password(request):
 
         }, status=503)
 
-    return Response({
+    payload = {
 
-        "message":
-        "OTP sent to email"
+        "message": "OTP sent to email"
 
-    })
+    }
+
+    if settings.DEMO_OTP_MODE:
+
+        payload["message"] = "OTP generated (demo mode)"
+        payload["otp"] = otp
+        payload["demo_mode"] = True
+
+    return Response(payload)
 
 # =====================================================
 # ACTIVITY TIMELINE
@@ -1694,7 +1706,7 @@ def register_client(request):
         )
 
         return Response({
-            "message": "Compte crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
+            "message": "Compte crÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
             "id": user.id
         }, status=201)
 

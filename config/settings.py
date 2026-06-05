@@ -19,6 +19,11 @@ DEBUG = os.environ.get(
 
 
 GOOGLE_OAUTH2_CLIENT_ID = os.environ.get("GOOGLE_OAUTH2_CLIENT_ID", "")
+
+DEMO_OTP_MODE = os.environ.get(
+    "DEMO_OTP_MODE",
+    "False"
+) == "True"
 ALLOWED_HOSTS = [".onrender.com"]
 
 
@@ -109,17 +114,17 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
-# Ã°Å¸â€Â JWT CONFIG
+# ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â JWT CONFIG
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 
-# Ã°Å¸â€Â¥ DRF + JWT (Ã™â€¦Ã™â€¡Ã™â€¦ Ã˜Â¬Ã˜Â¯Ã˜Â§Ã™â€¹)
+# ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â¥ DRF + JWT (Ãƒâ„¢Ã¢â‚¬Â¦Ãƒâ„¢Ã¢â‚¬Â¡Ãƒâ„¢Ã¢â‚¬Â¦ ÃƒËœÃ‚Â¬ÃƒËœÃ‚Â¯ÃƒËœÃ‚Â§Ãƒâ„¢Ã¢â‚¬Â¹)
 
 
-# Ã°Å¸Å’Â CORS
+# ÃƒÂ°Ã…Â¸Ã…â€™Ã‚Â CORS
 CORS_ALLOW_ALL_ORIGINS = True
 
 
