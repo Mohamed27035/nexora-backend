@@ -1,6 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from email_service.services import send_system_email, ResendEmailError
+from email_service.services import send_system_email, ResendEmailError, has_email_provider_configured
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import (check_password, make_password)
@@ -383,13 +383,15 @@ def send_otp(request):
 
         OTP_STORAGE[email] = otp
 
+        demo_payload = None
+
         if settings.DEMO_OTP_MODE:
 
             print(
                 f"DEMO OTP for {email} => {otp}"
             )
 
-            return Response({
+            demo_payload = {
 
                 "message":
                 "OTP generated in demo mode",
@@ -400,7 +402,11 @@ def send_otp(request):
                 "otp":
                 otp
 
-            })
+            }
+
+            if not has_email_provider_configured():
+
+                return Response(demo_payload)
 
         try:
 
@@ -432,6 +438,12 @@ def send_otp(request):
                 str(e)
 
             }, status=503)
+
+        if demo_payload is not None:
+
+            demo_payload["message"] = "OTP sent and returned in demo mode"
+
+            return Response(demo_payload)
 
         return Response({
 

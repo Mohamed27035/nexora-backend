@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.conf import settings
 import random
 from transactions.models import Transaction
-from email_service.services import send_system_email, ResendEmailError
+from email_service.services import send_system_email, ResendEmailError, has_email_provider_configured
 
 from .models import Utilisateur
 from .serializers import UtilisateurSerializer
@@ -139,7 +139,7 @@ def send_otp_email(user):
 
         user.save()
 
-        if settings.DEMO_OTP_MODE:
+        if settings.DEMO_OTP_MODE and not has_email_provider_configured():
 
             return otp
 
