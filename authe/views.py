@@ -383,6 +383,25 @@ def send_otp(request):
 
         OTP_STORAGE[email] = otp
 
+        if settings.DEMO_OTP_MODE:
+
+            print(
+                f"DEMO OTP for {email} => {otp}"
+            )
+
+            return Response({
+
+                "message":
+                "OTP generated in demo mode",
+
+                "demo_mode":
+                True,
+
+                "otp":
+                otp
+
+            })
+
         try:
 
             send_system_email(

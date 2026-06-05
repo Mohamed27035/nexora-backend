@@ -20,10 +20,23 @@ DEBUG = os.environ.get(
 
 GOOGLE_OAUTH2_CLIENT_ID = os.environ.get("GOOGLE_OAUTH2_CLIENT_ID", "")
 
-DEMO_OTP_MODE = os.environ.get(
-    "DEMO_OTP_MODE",
-    "False"
-) == "True"
+
+def env_flag(name, default="False"):
+
+    return os.environ.get(
+        name,
+        default
+    ).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on"
+    )
+
+
+DEMO_OTP_MODE = env_flag(
+    "DEMO_OTP_MODE"
+)
 ALLOWED_HOSTS = [".onrender.com"]
 
 
