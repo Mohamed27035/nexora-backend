@@ -109,17 +109,17 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
-# ðŸ” JWT CONFIG
+# Ã°Å¸â€Â JWT CONFIG
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
 
-# ðŸ”¥ DRF + JWT (Ù…Ù‡Ù… Ø¬Ø¯Ø§Ù‹)
+# Ã°Å¸â€Â¥ DRF + JWT (Ã™â€¦Ã™â€¡Ã™â€¦ Ã˜Â¬Ã˜Â¯Ã˜Â§Ã™â€¹)
 
 
-# ðŸŒ CORS
+# Ã°Å¸Å’Â CORS
 CORS_ALLOW_ALL_ORIGINS = True
 
 
@@ -136,23 +136,24 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # EMAIL CONFIG
 # =====================================
 
-EMAIL_BACKEND = (
-    'django.core.mail.backends.smtp.EmailBackend'
+RESEND_API_KEY = os.environ.get(
+    "RESEND_API_KEY",
+    ""
 )
 
-EMAIL_HOST = 'smtp.gmail.com'
-
-EMAIL_PORT = 587
-
-EMAIL_USE_TLS = True
-
-EMAIL_HOST_USER = 'mohamed27035@gmail.com'
-
-EMAIL_HOST_PASSWORD = 'zogcvcajhvllgbjo'
-
-DEFAULT_FROM_EMAIL = (
-    EMAIL_HOST_USER
+RESEND_FROM_EMAIL = os.environ.get(
+    "RESEND_FROM_EMAIL",
+    "Nexora <no-reply@example.com>"
 )
+
+EMAIL_REQUEST_TIMEOUT = int(
+    os.environ.get(
+        "EMAIL_REQUEST_TIMEOUT",
+        "15"
+    )
+)
+
+DEFAULT_FROM_EMAIL = RESEND_FROM_EMAIL
 
 # =====================================
 # CHANNELS

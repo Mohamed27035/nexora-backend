@@ -1,6 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.core.mail import send_mail
+from email_service.services import send_system_email, ResendEmailError
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import (check_password, make_password)
@@ -185,7 +185,7 @@ def register_admin(request):
         return Response({
 
             "message":
-            "Compte ADMIN crÃ©Ã©",
+            "Compte ADMIN crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
 
             "id":
             user.id
@@ -273,7 +273,7 @@ def register(request):
         return Response({
 
             "message":
-            "Compte CLIENT crÃ©Ã©",
+            "Compte CLIENT crÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
 
             "id":
             user.id
@@ -383,30 +383,41 @@ def send_otp(request):
 
         OTP_STORAGE[email] = otp
 
-        print("BEFORE SEND MAIL")
+        try:
 
-        # ==========================
-        # SEND EMAIL
-        # ==========================
-        send_mail(
+            send_system_email(
 
-            "Password Reset OTP",
+                to_email=email,
 
-            f"Votre code OTP est : {otp}",
+                subject="Password Reset OTP",
 
-            None,
+                message=f"Votre code OTP est : {otp}",
 
-            [email],
+                html_message=(
+                    f"<div style='font-family:Arial,sans-serif'>"
+                    f"<h2>Nexora OTP</h2>"
+                    f"<p>Votre code OTP est :</p>"
+                    f"<p style='font-size:28px;font-weight:bold;letter-spacing:4px;'>{otp}</p>"
+                    f"</div>"
+                )
+            )
 
-            fail_silently=False
-        )
+        except ResendEmailError as e:
 
-        print("AFTER SEND MAIL")
+            return Response({
+
+                "error":
+                "OTP email service unavailable",
+
+                "details":
+                str(e)
+
+            }, status=503)
 
         return Response({
 
             "message":
-            "OTP envoyé"
+            "OTP envoyÃƒÆ’Ã‚Â©"
 
         })
 
@@ -527,7 +538,7 @@ def send_welcome_otp(request):
         return Response({
 
             "message":
-            "OTP envoyÃ©",
+            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©",
 
             "otp":
             otp
