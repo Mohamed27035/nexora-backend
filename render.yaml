@@ -3,7 +3,7 @@ services:
     name: nexora-api
     env: python
     buildCommand: "./build.sh"
-    startCommand: "gunicorn config.wsgi:application --workers 1 --threads 2 --timeout 120"
+    startCommand: "gunicorn config.wsgi:application --workers 1 --threads 1 --timeout 120"
     envVars:
       - key: EMAIL_HOST
         value: smtp.gmail.com

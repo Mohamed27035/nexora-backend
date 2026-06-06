@@ -14,10 +14,6 @@ from users.models import Utilisateur
 
 import random
 
-from google.oauth2 import id_token as google_id_token
-from google.auth.transport import requests as google_requests
-
-
 OTP_EXPIRY_MINUTES = 10
 
 
@@ -785,6 +781,9 @@ def sso_google(request):
         }, status=400)
 
     try:
+
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
 
         info = google_id_token.verify_oauth2_token(
 
