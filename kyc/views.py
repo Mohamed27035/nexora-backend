@@ -13,6 +13,19 @@ from users.views import (
 from notifications.models import Notification
 
 
+def _fallback_ocr_value(primary_value, request_data, key):
+
+    if primary_value not in [None, ""]:
+        return primary_value
+
+    value = request_data.get(
+        key,
+        ""
+    )
+
+    return value.strip() if isinstance(value, str) else value
+
+
 # ==========================
 # SUBMIT KYC
 # ==========================
@@ -79,43 +92,74 @@ def submit_kyc(request):
         # SAVE OCR DATA
         # ==========================
         kyc.ocr_text = (
-            extracted_text
+            extracted_text or request.data.get(
+                "ocr_text",
+                ""
+            )
         )
 
         kyc.nni = (
-            parsed_data["nni"]
+            _fallback_ocr_value(
+                parsed_data["nni"],
+                request.data,
+                "nni"
+            )
         )
 
         kyc.prenom = (
-            parsed_data["prenom"]
+            _fallback_ocr_value(
+                parsed_data["prenom"],
+                request.data,
+                "prenom"
+            )
         )
 
         kyc.prenom_pere = (
-            parsed_data[
+            _fallback_ocr_value(
+                parsed_data[
+                    "prenom_pere"
+                ],
+                request.data,
                 "prenom_pere"
-            ]
+            )
         )
 
         kyc.nom_famille = (
-            parsed_data[
+            _fallback_ocr_value(
+                parsed_data[
+                    "nom_famille"
+                ],
+                request.data,
                 "nom_famille"
-            ]
+            )
         )
 
         kyc.sexe = (
-            parsed_data["sexe"]
+            _fallback_ocr_value(
+                parsed_data["sexe"],
+                request.data,
+                "sexe"
+            )
         )
 
         kyc.date_naissance = (
-            parsed_data[
+            _fallback_ocr_value(
+                parsed_data[
+                    "date_naissance"
+                ],
+                request.data,
                 "date_naissance"
-            ]
+            )
         )
 
         kyc.lieu_naissance = (
-            parsed_data[
+            _fallback_ocr_value(
+                parsed_data[
+                    "lieu_naissance"
+                ],
+                request.data,
                 "lieu_naissance"
-            ]
+            )
         )
 
         kyc.save()
