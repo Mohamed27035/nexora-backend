@@ -154,6 +154,21 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # EMAIL CONFIG
 # =====================================
 
+SENDGRID_API_KEY = os.environ.get(
+    "SENDGRID_API_KEY",
+    ""
+)
+
+SENDGRID_FROM_EMAIL = os.environ.get(
+    "SENDGRID_FROM_EMAIL",
+    ""
+)
+
+SENDGRID_FROM_NAME = os.environ.get(
+    "SENDGRID_FROM_NAME",
+    "Nexora"
+)
+
 RESEND_API_KEY = os.environ.get(
     "RESEND_API_KEY",
     ""
@@ -207,6 +222,7 @@ EMAIL_REQUEST_TIMEOUT = int(
 )
 
 DEFAULT_FROM_EMAIL = (
+    SENDGRID_FROM_EMAIL or
     os.environ.get("SMTP_FROM_EMAIL", "") or
     RESEND_SENDER_EMAIL or
     BREVO_SENDER_EMAIL or

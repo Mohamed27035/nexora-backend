@@ -5,18 +5,24 @@ services:
     buildCommand: "./build.sh"
     startCommand: "gunicorn config.wsgi:application --workers 1 --threads 1 --timeout 120"
     envVars:
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: SENDGRID_FROM_EMAIL
+        sync: false
+      - key: SENDGRID_FROM_NAME
+        value: "Nexora"
       - key: EMAIL_HOST
-        value: smtp.gmail.com
+        sync: false
       - key: EMAIL_PORT
-        value: "587"
+        sync: false
       - key: EMAIL_HOST_USER
         sync: false
       - key: EMAIL_HOST_PASSWORD
         sync: false
       - key: EMAIL_USE_TLS
-        value: "True"
+        sync: false
       - key: EMAIL_USE_SSL
-        value: "False"
+        sync: false
       - key: SMTP_FROM_EMAIL
         sync: false
       - key: DEMO_OTP_MODE
