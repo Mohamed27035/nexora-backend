@@ -154,14 +154,34 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # EMAIL CONFIG
 # =====================================
 
-RESEND_API_KEY = os.environ.get(
-    "RESEND_API_KEY",
+MAILERSEND_API_KEY = os.environ.get(
+    "MAILERSEND_API_KEY",
     ""
 )
 
-RESEND_FROM_EMAIL = os.environ.get(
-    "RESEND_FROM_EMAIL",
-    "Nexora <no-reply@example.com>"
+MAILERSEND_SENDER_EMAIL = os.environ.get(
+    "MAILERSEND_SENDER_EMAIL",
+    ""
+)
+
+MAILERSEND_SENDER_NAME = os.environ.get(
+    "MAILERSEND_SENDER_NAME",
+    "Nexora"
+)
+
+BREVO_API_KEY = os.environ.get(
+    "BREVO_API_KEY",
+    ""
+)
+
+BREVO_SENDER_EMAIL = os.environ.get(
+    "BREVO_SENDER_EMAIL",
+    ""
+)
+
+BREVO_SENDER_NAME = os.environ.get(
+    "BREVO_SENDER_NAME",
+    "Nexora"
 )
 
 EMAIL_REQUEST_TIMEOUT = int(
@@ -171,44 +191,7 @@ EMAIL_REQUEST_TIMEOUT = int(
     )
 )
 
-DEFAULT_FROM_EMAIL = RESEND_FROM_EMAIL
-
-EMAIL_BACKEND = os.environ.get(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.smtp.EmailBackend"
-)
-
-EMAIL_HOST = os.environ.get(
-    "EMAIL_HOST",
-    ""
-)
-
-EMAIL_PORT = int(
-    os.environ.get(
-        "EMAIL_PORT",
-        "587"
-    )
-)
-
-EMAIL_HOST_USER = os.environ.get(
-    "EMAIL_HOST_USER",
-    ""
-)
-
-EMAIL_HOST_PASSWORD = os.environ.get(
-    "EMAIL_HOST_PASSWORD",
-    ""
-)
-
-EMAIL_USE_TLS = env_flag(
-    "EMAIL_USE_TLS",
-    "True"
-)
-
-EMAIL_USE_SSL = env_flag(
-    "EMAIL_USE_SSL",
-    "False"
-)
+DEFAULT_FROM_EMAIL = MAILERSEND_SENDER_EMAIL or "no-reply@example.com"
 
 # =====================================
 # CHANNELS

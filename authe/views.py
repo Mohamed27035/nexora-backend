@@ -1,10 +1,11 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from email_service.services import send_system_email, ResendEmailError, has_email_provider_configured
+from email_service.services import send_system_email, EmailServiceError, has_email_provider_configured
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import (check_password, make_password)
 from django.utils.crypto import get_random_string
+from django.utils import timezone
 from rest_framework_simplejwt.tokens import (AccessToken)
 
 from datetime import timedelta
@@ -17,7 +18,59 @@ from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 
 
-OTP_STORAGE = {}
+OTP_EXPIRY_MINUTES = 10
+
+
+def _generate_otp():
+
+    return str(
+        random.randint(
+            100000,
+            999999
+        )
+    )
+
+
+def _set_user_otp(user, otp):
+
+    user.otp_code = otp
+    user.otp_created_at = timezone.now()
+    user.save(
+        update_fields=[
+            "otp_code",
+            "otp_created_at",
+        ]
+    )
+
+
+def _is_user_otp_valid(user, otp):
+
+    if not user or not user.otp_code or not user.otp_created_at:
+        return False, "OTP not found"
+
+    expires_at = user.otp_created_at + timedelta(
+        minutes=OTP_EXPIRY_MINUTES
+    )
+
+    if timezone.now() > expires_at:
+        return False, "OTP expired"
+
+    if user.otp_code != otp:
+        return False, "OTP incorrect"
+
+    return True, None
+
+
+def _clear_user_otp(user):
+
+    user.otp_code = None
+    user.otp_created_at = None
+    user.save(
+        update_fields=[
+            "otp_code",
+            "otp_created_at",
+        ]
+    )
 
 
 # ==========================================
@@ -373,15 +426,11 @@ def send_otp(request):
 
             }, status=404)
 
-        otp = str(
-
-            random.randint(
-                100000,
-                999999
-            )
+        otp = _generate_otp()
+        _set_user_otp(
+            user,
+            otp
         )
-
-        OTP_STORAGE[email] = otp
 
         demo_payload = None
 
@@ -427,7 +476,7 @@ def send_otp(request):
                 )
             )
 
-        except ResendEmailError as e:
+        except EmailServiceError as e:
 
             return Response({
 
@@ -488,24 +537,6 @@ def verify_otp(request):
             "password"
         )
 
-        if email not in OTP_STORAGE:
-
-            return Response({
-
-                "error":
-                "OTP not found"
-
-            }, status=400)
-
-        if OTP_STORAGE[email] != otp:
-
-            return Response({
-
-                "error":
-                "OTP incorrect"
-
-            }, status=400)
-
         user = Utilisateur.objects.filter(
             email=email
         ).first()
@@ -519,13 +550,33 @@ def verify_otp(request):
 
             }, status=404)
 
+        is_valid, validation_error = _is_user_otp_valid(
+            user,
+            otp
+        )
+
+        if not is_valid:
+
+            return Response({
+
+                "error":
+                validation_error
+
+            }, status=400)
+
         user.password = make_password(
             password
         )
 
-        user.save()
-
-        del OTP_STORAGE[email]
+        user.otp_code = None
+        user.otp_created_at = None
+        user.save(
+            update_fields=[
+                "password",
+                "otp_code",
+                "otp_created_at",
+            ]
+        )
 
         return Response({
 
@@ -553,14 +604,24 @@ def send_welcome_otp(request):
             ""
         ).strip().lower()
 
-        otp = str(
-            random.randint(
-                100000,
-                999999
-            )
-        )
+        user = Utilisateur.objects.filter(
+            email=email
+        ).first()
 
-        OTP_STORAGE[email] = otp
+        if not user:
+
+            return Response({
+
+                "error":
+                "User not found"
+
+            }, status=404)
+
+        otp = _generate_otp()
+        _set_user_otp(
+            user,
+            otp
+        )
 
         print(
             f"OTP for {email} => {otp}"
@@ -599,25 +660,36 @@ def verify_welcome_otp(request):
             "otp"
         )
 
-        if email not in OTP_STORAGE:
+        user = Utilisateur.objects.filter(
+            email=email
+        ).first()
+
+        if not user:
 
             return Response({
 
                 "error":
-                "OTP not found"
+                "User not found"
 
-            }, status=400)
+            }, status=404)
 
-        if OTP_STORAGE[email] != otp:
+        is_valid, validation_error = _is_user_otp_valid(
+            user,
+            otp
+        )
+
+        if not is_valid:
 
             return Response({
 
                 "error":
-                "OTP incorrect"
+                validation_error
 
             }, status=400)
 
-        del OTP_STORAGE[email]
+        _clear_user_otp(
+            user
+        )
 
         return Response({
 
