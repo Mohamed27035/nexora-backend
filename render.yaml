@@ -4,3 +4,20 @@ services:
     env: python
     buildCommand: "./build.sh"
     startCommand: "gunicorn config.wsgi:application --workers 1 --threads 2 --timeout 120"
+    envVars:
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: EMAIL_USE_SSL
+        value: "False"
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: DEMO_OTP_MODE
+        value: "False"

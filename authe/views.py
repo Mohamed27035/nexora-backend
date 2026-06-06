@@ -436,10 +436,6 @@ def send_otp(request):
 
         if settings.DEMO_OTP_MODE:
 
-            print(
-                f"DEMO OTP for {email} => {otp}"
-            )
-
             demo_payload = {
 
                 "message":
@@ -623,17 +619,68 @@ def send_welcome_otp(request):
             otp
         )
 
-        print(
-            f"OTP for {email} => {otp}"
-        )
+        demo_payload = None
+
+        if settings.DEMO_OTP_MODE:
+
+            demo_payload = {
+
+                "message":
+                "OTP generated in demo mode",
+
+                "demo_mode":
+                True,
+
+                "otp":
+                otp
+
+            }
+
+            if not has_email_provider_configured():
+
+                return Response(demo_payload)
+
+        try:
+
+            send_system_email(
+
+                to_email=email,
+
+                subject="Welcome OTP",
+
+                message=f"Votre code OTP est : {otp}",
+
+                html_message=(
+                    f"<div style='font-family:Arial,sans-serif'>"
+                    f"<h2>Bienvenue sur Nexora</h2>"
+                    f"<p>Votre code OTP est :</p>"
+                    f"<p style='font-size:28px;font-weight:bold;letter-spacing:4px;'>{otp}</p>"
+                    f"</div>"
+                )
+            )
+
+        except EmailServiceError as e:
+
+            return Response({
+
+                "error":
+                "OTP email service unavailable",
+
+                "details":
+                str(e)
+
+            }, status=503)
+
+        if demo_payload is not None:
+
+            demo_payload["message"] = "OTP sent and returned in demo mode"
+
+            return Response(demo_payload)
 
         return Response({
 
             "message":
-            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-            "otp":
-            otp
+            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
 
         })
 
