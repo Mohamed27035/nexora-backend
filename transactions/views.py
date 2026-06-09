@@ -1,691 +1,373 @@
+from decimal import Decimal, InvalidOperation
+
+from django.db import transaction as db_transaction
+from django.db.models import Q
+from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from rest_framework import status
-from decimal import Decimal
+
+from notifications.models import Notification
+from users.models import Utilisateur
+from users.views import create_log, get_current_user, has_role
+
 from .models import Transaction
 from .serializers import TransactionSerializer
 
-from users.views import (
-    get_current_user,
-    create_log
-)
 
-from users.models import Utilisateur
+ALLOWED_TRANSACTION_TYPES = {
+    "DEPOSIT",
+    "WITHDRAW",
+    "TRANSFER",
+}
 
-from notifications.models import Notification
+REVIEWER_ROLES = {
+    "ADMIN",
+    "COMPTABLE",
+}
 
 
-# ==========================
-# CREATE NOTIFICATION
-# ==========================
+def _error(message, status_code=400):
+    return Response({"error": message}, status=status_code)
+
+
+def _normalize_transaction_type(value):
+    return str(value or "").strip().upper()
+
+
+def _normalize_sort(value):
+    allowed = {
+        "newest": "-created_at",
+        "oldest": "created_at",
+        "amount_desc": "-montant",
+        "amount_asc": "montant",
+        "updated_desc": "-updated_at",
+    }
+    return allowed.get(str(value or "").strip().lower(), "-created_at")
+
+
+def _serialize_transaction(transaction, request):
+    return TransactionSerializer(
+        transaction,
+        context={"request": request},
+    ).data
+
+
 def create_notification(user, message):
-
     try:
-
         Notification.objects.create(
-
             utilisateur=user,
-
             title="Transaction",
-
-            message=message
+            message=message,
         )
+    except Exception:
+        pass
 
-    except Exception as e:
 
-        print(
-            "NOTIFICATION ERROR =>",
-            str(e)
+def _require_reviewer(user):
+    return has_role(user, *REVIEWER_ROLES)
+
+
+def _require_verified_for_financial_action(user, transaction_type):
+    if transaction_type in {"WITHDRAW", "TRANSFER"} and not user.is_verified:
+        return _error(
+            "Votre compte doit être vérifié par KYC pour effectuer cette opération.",
+            403,
         )
+    return None
 
 
-# ==========================
-# CREATE TRANSACTION
-# ==========================
-@api_view(['POST'])
+def _parse_amount(raw_amount):
+    try:
+        amount = Decimal(str(raw_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+    if amount <= 0:
+        return None
+
+    return amount.quantize(Decimal("0.01"))
+
+
+def _find_receiver(data):
+    receiver_id = data.get("receiver")
+    receiver_email = str(data.get("receiver_email", "")).strip().lower()
+
+    if receiver_id:
+        return Utilisateur.objects.filter(id=receiver_id).first()
+
+    if receiver_email:
+        return Utilisateur.objects.filter(email=receiver_email).first()
+
+    return None
+
+
+@api_view(["POST"])
 def create_transaction(request):
-
-    user, error = get_current_user(
-        request
-    )
-
+    user, error = get_current_user(request)
     if error:
         return error
 
     data = request.data.copy()
-
-    # ==========================
-    # SENDER
-    # ==========================
     data["sender"] = user.id
 
-    # ==========================
-    # VALIDATE AMOUNT
-    # ==========================
-    try:
+    transaction_type = _normalize_transaction_type(data.get("type"))
+    amount = _parse_amount(data.get("montant"))
 
-        montant = float(
-            data.get("montant", 0)
-        )
+    if not amount:
+        return _error("Montant invalide", 400)
 
-    except:
+    if transaction_type not in ALLOWED_TRANSACTION_TYPES:
+        return _error("Type de transaction invalide", 400)
 
-        return Response({
+    kyc_error = _require_verified_for_financial_action(user, transaction_type)
+    if kyc_error:
+        return kyc_error
 
-            "error":
-            "Montant invalide"
-
-        }, status=400)
-
-    if montant <= 0:
-
-        return Response({
-
-            "error":
-            "Invalid amount"
-
-        }, status=400)
-
-    # ==========================
-    # TYPE
-    # ==========================
-    transaction_type = data.get(
-        "type"
-    )
-
-    # ==========================
-    # VALID TYPES
-    # ==========================
-    if transaction_type not in [
-
-        "DEPOSIT",
-
-        "WITHDRAW",
-
-        "TRANSFER"
-    ]:
-
-        return Response({
-
-            "error":
-            "Type invalide"
-
-        }, status=400)
-
-    # ==========================
-    # WITHDRAW CHECK
-    # ==========================
-    if transaction_type == "WITHDRAW":
-
-        if user.balance < montant:
-
-            return Response({
-
-                "error":
-                "Insufficient balance"
-
-            }, status=400)
-
-    # ==========================
-    # TRANSFER CHECK
-    # ==========================
+    receiver = None
     if transaction_type == "TRANSFER":
-
-        receiver_id = data.get(
-            "receiver"
-        )
-
-        if not receiver_id:
-
-            return Response({
-
-                "error":
-                "Receiver required"
-
-            }, status=400)
-
-        try:
-
-            receiver = Utilisateur.objects.get(
-                id=receiver_id
-            )
-
-        except Utilisateur.DoesNotExist:
-
-            return Response({
-
-                "error":
-                "Receiver not found"
-
-            }, status=404)
-
+        receiver = _find_receiver(data)
+        if not receiver:
+            return _error("Destinataire introuvable", 404)
         if receiver.id == user.id:
-
-            return Response({
-
-                "error":
-                "Cannot transfer to yourself"
-
-            }, status=400)
-
-        if user.balance < montant:
-
-            return Response({
-
-                "error":
-                "Insufficient balance"
-
-            }, status=400)
-
-    # ==========================
-    # CREATE
-    # ==========================
-    serializer = TransactionSerializer(
-        data=data
-    )
-
-    if serializer.is_valid():
-
-        transaction = serializer.save()
-
-        # LOG
-        create_log(
-
-            user,
-
-            "CREATE_TRANSACTION",
-
-            f"transaction_id={transaction.id}"
-        )
-
-        # NOTIFICATION
-        create_notification(
-
-            user,
-
-            f"Transaction {transaction.type} créée avec succès"
-        )
-
-        return Response({
-
-            "message":
-            "Transaction created",
-
-            "transaction":
-            TransactionSerializer(
-                transaction
-            ).data
-
-        }, status=status.HTTP_201_CREATED)
-
-    return Response(
-
-        serializer.errors,
-
-        status=status.HTTP_400_BAD_REQUEST
-    )
-
-
-# ==========================
-# GET TRANSACTIONS
-# ==========================
-# ==========================
-# GET TRANSACTIONS
-# ==========================
-@api_view(['GET'])
-def get_transactions(request):
-
-    user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    role = str(
-        user.role
-    ).upper()
-
-    # ==========================
-    # FILTERS
-    # ==========================
-    status_filter = request.GET.get(
-        "status",
-        "ALL"
-    )
-
-    type_filter = request.GET.get(
-        "type",
-        "ALL"
-    )
-
-    start = request.GET.get(
-        "start"
-    )
-
-    end = request.GET.get(
-        "end"
-    )
-
-    search = request.GET.get(
-        "search",
-        ""
-    )
-
-    # ==========================
-    # BASE QUERY
-    # ==========================
-    if role in [
-
-        "ADMIN",
-        "COMPTABLE"
-
-    ]:
-
-        transactions = (
-            Transaction.objects.all()
-        )
-
+            return _error("Impossible de transférer à soi-même", 400)
+        if Decimal(str(user.balance)) < amount:
+            return _error("Solde insuffisant", 400)
+        data["receiver"] = receiver.id
     else:
+        data.pop("receiver", None)
 
-        transactions = (
-            Transaction.objects.filter(
-                sender=user
-            )
-        )
+    data.pop("receiver_email", None)
 
-    # ==========================
-    # STATUS FILTER
-    # ==========================
-    if status_filter != "ALL":
+    if transaction_type == "WITHDRAW" and Decimal(str(user.balance)) < amount:
+        return _error("Solde insuffisant", 400)
 
-        transactions = transactions.filter(
-            status=status_filter
-        )
+    data["type"] = transaction_type
+    data["montant"] = str(amount)
 
-    # ==========================
-    # TYPE FILTER
-    # ==========================
-    if type_filter != "ALL":
+    serializer = TransactionSerializer(data=data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        transactions = transactions.filter(
-            type=type_filter
-        )
+    transaction = serializer.save()
 
-    # ==========================
-    # DATE FILTER
-    # ==========================
-    if start:
-
-        transactions = transactions.filter(
-            created_at__date__gte=start
-        )
-
-    if end:
-
-        transactions = transactions.filter(
-            created_at__date__lte=end
-        )
-
-    # ==========================
-    # SEARCH
-    # ==========================
-    if search:
-
-        transactions = transactions.filter(
-            sender__nom__icontains=search
-        ) | transactions.filter(
-            receiver__nom__icontains=search
-        ) | transactions.filter(
-            type__icontains=search
-        )
-
-    # ==========================
-    # ORDER
-    # ==========================
-    transactions = transactions.order_by(
-        "-created_at"
+    create_log(
+        user,
+        "CREATE_TRANSACTION",
+        (
+            f"transaction_id={transaction.id};"
+            f"type={transaction.type};amount={transaction.montant};status=PENDING"
+        ),
     )
 
-    serializer = TransactionSerializer(
-
-        transactions,
-
-        many=True
+    create_notification(
+        user,
+        f"Votre transaction {transaction.type} a été créée et attend une validation.",
     )
 
     return Response(
-        serializer.data
+        {
+            "message": "Transaction créée avec succès.",
+            "transaction": _serialize_transaction(transaction, request),
+        },
+        status=status.HTTP_201_CREATED,
     )
 
 
-# ==========================
-# APPROVE TRANSACTION
-# ==========================
-# ==========================
-# APPROVE TRANSACTION
-# ==========================
-@api_view(['POST'])
-def approve_transaction(
-    request,
-    transaction_id
-):
-
-    try:
-
-        user, error = get_current_user(
-            request
-        )
-
-        if error:
-            return error
-
-        # ==========================
-        # ONLY ADMIN / COMPTABLE
-        # ==========================
-        if str(user.role).upper() not in [
-
-            "ADMIN",
-            "COMPTABLE"
-
-        ]:
-
-            return Response({
-
-                "error":
-                "Permission denied"
-
-            }, status=403)
-
-        # ==========================
-        # GET TRANSACTION
-        # ==========================
-        try:
-
-            transaction = (
-                Transaction.objects.get(
-                    id=transaction_id
-                )
-            )
-
-        except Transaction.DoesNotExist:
-
-            return Response({
-
-                "error":
-                "Transaction not found"
-
-            }, status=404)
-
-        # ==========================
-        # ALREADY PROCESSED
-        # ==========================
-        if transaction.status != "PENDING":
-
-            return Response({
-
-                "error":
-                "Transaction already processed"
-
-            }, status=400)
-
-        sender = transaction.sender
-
-        receiver = transaction.receiver
-
-        montant = Decimal(
-            str(transaction.montant)
-        )
-
-        print(
-            "TYPE =>",
-            transaction.type
-        )
-
-        print(
-            "AMOUNT =>",
-            montant
-        )
-
-        print(
-            "SENDER BALANCE BEFORE =>",
-            sender.balance
-        )
-
-        # ==========================
-        # DEPOSIT
-        # ==========================
-        if transaction.type == "DEPOSIT":
-
-            sender.balance = Decimal(
-                str(sender.balance)
-            ) + montant
-
-            sender.save()
-
-            print(
-                "BALANCE AFTER DEPOSIT =>",
-                sender.balance
-            )
-
-        # ==========================
-        # WITHDRAW
-        # ==========================
-        elif transaction.type == "WITHDRAW":
-
-            if Decimal(
-                str(sender.balance)
-            ) < montant:
-
-                return Response({
-
-                    "error":
-                    "Insufficient balance"
-
-                }, status=400)
-
-            sender.balance = Decimal(
-                str(sender.balance)
-            ) - montant
-
-            sender.save()
-
-            print(
-                "BALANCE AFTER WITHDRAW =>",
-                sender.balance
-            )
-
-        # ==========================
-        # TRANSFER
-        # ==========================
-        elif transaction.type == "TRANSFER":
-
-            if not receiver:
-
-                return Response({
-
-                    "error":
-                    "Receiver missing"
-
-                }, status=400)
-
-            if Decimal(
-                str(sender.balance)
-            ) < montant:
-
-                return Response({
-
-                    "error":
-                    "Insufficient balance"
-
-                }, status=400)
-
-            sender.balance = Decimal(
-                str(sender.balance)
-            ) - montant
-
-            receiver.balance = Decimal(
-                str(receiver.balance)
-            ) + montant
-
-            sender.save()
-
-            receiver.save()
-
-            print(
-                "TRANSFER SUCCESS"
-            )
-
-        # ==========================
-        # VALIDATION
-        # ==========================
-        transaction.status = "APPROVED"
-
-        transaction.validated_by = user
-
-        transaction.validation_note = (
-            request.data.get(
-                "note",
-                ""
-            )
-        )
-
-        transaction.save()
-
-        # ==========================
-        # LOG
-        # ==========================
-        create_log(
-
-            user,
-
-            "APPROVE_TRANSACTION",
-
-            f"transaction_id={transaction.id}"
-        )
-
-        # ==========================
-        # NOTIFICATION
-        # ==========================
-        create_notification(
-
-            sender,
-
-            f"Votre transaction #{transaction.id} a été approuvée"
-        )
-
-        return Response({
-
-            "message":
-            "Transaction approved"
-
-        })
-
-    except Exception as e:
-
-        print(
-            "APPROVAL ERROR =>",
-            str(e)
-        )
-
-        return Response({
-
-            "error":
-            str(e)
-
-        }, status=500)
-@api_view(['POST'])
-def reject_transaction(
-    request,
-    transaction_id
-):
-
-    user, error = get_current_user(
-        request
-    )
-
+@api_view(["GET"])
+def get_transactions(request):
+    user, error = get_current_user(request)
     if error:
         return error
 
-    # ==========================
-    # ONLY ADMIN / COMPTABLE
-    # ==========================
-    if str(user.role).upper() not in [
+    status_filter = str(request.GET.get("status", "ALL")).strip().upper()
+    type_filter = _normalize_transaction_type(request.GET.get("type", "ALL"))
+    start = request.GET.get("start")
+    end = request.GET.get("end")
+    search = str(request.GET.get("search", "")).strip()
+    sort = _normalize_sort(request.GET.get("sort"))
 
-        "ADMIN",
+    if _require_reviewer(user):
+        transactions = Transaction.objects.select_related(
+            "sender",
+            "receiver",
+            "validated_by",
+        ).all()
+    else:
+        transactions = Transaction.objects.select_related(
+            "sender",
+            "receiver",
+            "validated_by",
+        ).filter(Q(sender=user) | Q(receiver=user))
 
-        "COMPTABLE"
+    if status_filter != "ALL":
+        transactions = transactions.filter(status=status_filter)
 
-    ]:
+    if type_filter != "ALL":
+        transactions = transactions.filter(type=type_filter)
 
-        return Response({
+    if start:
+        transactions = transactions.filter(created_at__date__gte=start)
+    if end:
+        transactions = transactions.filter(created_at__date__lte=end)
 
-            "error":
-            "Permission denied"
-
-        }, status=403)
-
-    try:
-
-        transaction = Transaction.objects.get(
-            id=transaction_id
+    if search:
+        search_query = (
+            Q(sender__nom__icontains=search)
+            | Q(sender__prenom__icontains=search)
+            | Q(sender__email__icontains=search)
+            | Q(receiver__nom__icontains=search)
+            | Q(receiver__prenom__icontains=search)
+            | Q(receiver__email__icontains=search)
+            | Q(type__icontains=search)
+            | Q(status__icontains=search)
+            | Q(note__icontains=search)
+            | Q(validation_note__icontains=search)
         )
 
-    except Transaction.DoesNotExist:
+        if search.isdigit():
+            search_query |= Q(id=int(search))
 
-        return Response({
+        transactions = transactions.filter(search_query)
 
-            "error":
-            "Transaction not found"
+    transactions = transactions.order_by(sort)
 
-        }, status=404)
+    serializer = TransactionSerializer(
+        transactions,
+        many=True,
+        context={"request": request},
+    )
+    return Response(serializer.data)
 
-    # ==========================
-    # ALREADY PROCESSED
-    # ==========================
+
+def _apply_transaction_effect(transaction):
+    sender = transaction.sender
+    receiver = transaction.receiver
+    amount = Decimal(str(transaction.montant)).quantize(Decimal("0.01"))
+
+    if transaction.type == "DEPOSIT":
+        sender.balance = float(Decimal(str(sender.balance)) + amount)
+        sender.save(update_fields=["balance"])
+        return
+
+    if transaction.type == "WITHDRAW":
+        current_balance = Decimal(str(sender.balance))
+        if current_balance < amount:
+            raise ValueError("Solde insuffisant")
+        sender.balance = float(current_balance - amount)
+        sender.save(update_fields=["balance"])
+        return
+
+    if transaction.type == "TRANSFER":
+        if not receiver:
+            raise ValueError("Destinataire manquant")
+
+        sender_balance = Decimal(str(sender.balance))
+        if sender_balance < amount:
+            raise ValueError("Solde insuffisant")
+
+        receiver_balance = Decimal(str(receiver.balance))
+        sender.balance = float(sender_balance - amount)
+        receiver.balance = float(receiver_balance + amount)
+        sender.save(update_fields=["balance"])
+        receiver.save(update_fields=["balance"])
+        return
+
+    raise ValueError("Type de transaction invalide")
+
+
+@api_view(["POST"])
+def approve_transaction(request, transaction_id):
+    reviewer, error = get_current_user(request)
+    if error:
+        return error
+
+    if not _require_reviewer(reviewer):
+        return _error("Permission refusée", 403)
+
+    transaction = Transaction.objects.select_related("sender", "receiver").filter(
+        id=transaction_id
+    ).first()
+    if not transaction:
+        return _error("Transaction introuvable", 404)
+
     if transaction.status != "PENDING":
+        return _error("Cette transaction a déjà été traitée", 400)
 
-        return Response({
+    with db_transaction.atomic():
+        try:
+            _apply_transaction_effect(transaction)
+        except ValueError as exc:
+            return _error(str(exc), 400)
 
-            "error":
-            "Transaction already processed"
+        transaction.status = "APPROVED"
+        transaction.validated_by = reviewer
+        transaction.validation_note = request.data.get("note", "")
+        transaction.save(
+            update_fields=["status", "validated_by", "validation_note", "updated_at"]
+        )
 
-        }, status=400)
+    create_log(
+        reviewer,
+        "APPROVE_TRANSACTION",
+        (
+            f"transaction_id={transaction.id};"
+            f"type={transaction.type};amount={transaction.montant};status=APPROVED"
+        ),
+    )
+
+    create_notification(
+        transaction.sender,
+        f"Votre transaction #{transaction.id} a été approuvée.",
+    )
+
+    return Response(
+        {
+            "message": "Transaction approuvée.",
+            "transaction": _serialize_transaction(transaction, request),
+        }
+    )
+
+
+@api_view(["POST"])
+def reject_transaction(request, transaction_id):
+    reviewer, error = get_current_user(request)
+    if error:
+        return error
+
+    if not _require_reviewer(reviewer):
+        return _error("Permission refusée", 403)
+
+    transaction = Transaction.objects.filter(id=transaction_id).first()
+    if not transaction:
+        return _error("Transaction introuvable", 404)
+
+    if transaction.status != "PENDING":
+        return _error("Cette transaction a déjà été traitée", 400)
 
     transaction.status = "REJECTED"
-
-    transaction.validated_by = user
-
-    transaction.validation_note = (
-        request.data.get(
-            "note",
-            ""
-        )
+    transaction.validated_by = reviewer
+    transaction.validation_note = request.data.get("note", "")
+    transaction.save(
+        update_fields=["status", "validated_by", "validation_note", "updated_at"]
     )
 
-    transaction.save()
-
-    # LOG
     create_log(
-
-        user,
-
+        reviewer,
         "REJECT_TRANSACTION",
-
-        f"transaction_id={transaction.id}"
+        (
+            f"transaction_id={transaction.id};"
+            f"type={transaction.type};amount={transaction.montant};status=REJECTED"
+        ),
     )
 
-    # NOTIFICATION
     create_notification(
-
         transaction.sender,
-
-        f"Votre transaction #{transaction.id} a été rejetée"
+        f"Votre transaction #{transaction.id} a été rejetée.",
     )
 
-    return Response({
-
-        "message":
-        "Transaction rejected"
-
-    })
+    return Response(
+        {
+            "message": "Transaction rejetée.",
+            "transaction": _serialize_transaction(transaction, request),
+        }
+    )
