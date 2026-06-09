@@ -1,79 +1,24 @@
 from rest_framework.permissions import BasePermission
 
+from .views import has_role
+
 
 class IsAdmin(BasePermission):
-
-    def has_permission(
-        self,
-        request,
-        view
-    ):
-
-        return (
-            hasattr(request, "user")
-            and
-            request.user
-            and
-            str(request.user.role)
-            .upper() == "ADMIN"
-        )
+    def has_permission(self, request, view):
+        return hasattr(request, "user") and has_role(request.user, "ADMIN")
 
 
-class IsAuditeur(
-    BasePermission
-):
-
-    def has_permission(
-        self,
-        request,
-        view
-    ):
-
-        return (
-            hasattr(request, "user")
-            and
-            request.user
-            and
-            str(request.user.role)
-            .upper() == "AUDITEUR"
-        )
+class IsAuditeur(BasePermission):
+    def has_permission(self, request, view):
+        return hasattr(request, "user") and has_role(request.user, "AUDITEUR")
 
 
-class IsComptable(
-    BasePermission
-):
-
-    def has_permission(
-        self,
-        request,
-        view
-    ):
-
-        return (
-            hasattr(request, "user")
-            and
-            request.user
-            and
-            str(request.user.role)
-            .upper() == "COMPTABLE"
-        )
+class IsComptable(BasePermission):
+    def has_permission(self, request, view):
+        return hasattr(request, "user") and has_role(request.user, "COMPTABLE")
 
 
-class IsClient(
-    BasePermission
-):
+class IsClient(BasePermission):
+    def has_permission(self, request, view):
+        return hasattr(request, "user") and has_role(request.user, "CLIENT")
 
-    def has_permission(
-        self,
-        request,
-        view
-    ):
-
-        return (
-            hasattr(request, "user")
-            and
-            request.user
-            and
-            str(request.user.role)
-            .upper() == "CLIENT"
-        )

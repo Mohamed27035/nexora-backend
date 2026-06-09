@@ -2,6 +2,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.files.base import ContentFile
 from django.utils import timezone
+from django.db.models import Q
 from .models import KYCRequest
 from .serializers import KYCRequestSerializer
 from io import BytesIO
@@ -105,13 +106,35 @@ def _populate_ocr_fields(kyc, request_data=None):
         parse_mauritanian_id
     )
 
-    extracted_text = extract_text_from_image(
-        kyc.id_document.path
-    )
+    extracted_text = ""
+    parsed_data = {
+        "nni": "",
+        "prenom": "",
+        "prenom_pere": "",
+        "nom_famille": "",
+        "sexe": "",
+        "date_naissance": "",
+        "lieu_naissance": "",
+    }
 
-    parsed_data = parse_mauritanian_id(
-        extracted_text
-    )
+    try:
+
+        if kyc.id_document:
+
+            extracted_text = extract_text_from_image(
+                kyc.id_document.path
+            )
+
+            parsed_data = parse_mauritanian_id(
+                extracted_text
+            )
+
+    except Exception as e:
+
+        print(
+            "OCR POPULATE ERROR =>",
+            str(e)
+        )
 
     source_data = request_data or {}
 
@@ -332,7 +355,8 @@ def get_my_kyc(request):
 
         kyc,
 
-        many=True
+        many=True,
+        context={"request": request}
     )
 
     return Response(
@@ -362,8 +386,42 @@ def get_all_kyc(request):
 
         }, status=403)
 
-    kyc = KYCRequest.objects.all()\
-        .order_by("-submitted_at")
+    status_filter = request.GET.get(
+        "status",
+        "ALL"
+    ).strip().upper()
+
+    search = request.GET.get(
+        "search",
+        ""
+    ).strip()
+
+    kyc = KYCRequest.objects.select_related(
+        "utilisateur",
+        "reviewed_by",
+    ).all()
+
+    if status_filter != "ALL":
+        kyc = kyc.filter(
+            status=status_filter
+        )
+
+    if search:
+        kyc = kyc.filter(
+            Q(utilisateur__nom__icontains=search)
+            |
+            Q(utilisateur__prenom__icontains=search)
+            |
+            Q(utilisateur__email__icontains=search)
+            |
+            Q(nni__icontains=search)
+            |
+            Q(prenom__icontains=search)
+            |
+            Q(nom_famille__icontains=search)
+        )
+
+    kyc = kyc.order_by("-submitted_at")
 
     for item in kyc:
         _ensure_kyc_assets_ready(
@@ -374,7 +432,8 @@ def get_all_kyc(request):
 
         kyc,
 
-        many=True
+        many=True,
+        context={"request": request}
     )
 
     return Response(

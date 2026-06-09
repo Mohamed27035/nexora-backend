@@ -1,146 +1,187 @@
-# users/views.py
-
+from django.conf import settings
+from django.contrib.auth.hashers import make_password
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from notifications.models import Notification
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from django.contrib.auth.hashers import make_password
-from django.utils import timezone
-from django.conf import settings
-import random
+from email_service.services import (
+    EmailServiceError,
+    has_email_provider_configured,
+    send_system_email,
+)
+from logs.models import Log
+from notifications.models import Notification
 from transactions.models import Transaction
-from email_service.services import send_system_email, EmailServiceError, has_email_provider_configured
 
 from .models import Utilisateur
 from .serializers import UtilisateurSerializer
 
-from logs.models import Log
 
-from rest_framework_simplejwt.authentication import JWTAuthentication
+ROLE_ALIASES = {
+    "ADMINISTRATEUR": "ADMIN",
+}
+
+MANAGEABLE_ROLES = {
+    "ADMIN",
+    "AUDITEUR",
+    "COMPTABLE",
+    "CLIENT",
+}
+
+SUSPICIOUS_ACTIONS = {
+    "DELETE_USER",
+    "BAN_USER",
+    "RESET_PASSWORD",
+    "REJECT_TRANSACTION",
+    "SUSPEND_USER",
+}
 
 
-# =====================================================
-# ROLES
-# =====================================================
+def normalize_role(role):
+    if role is None:
+        return None
+
+    normalized = str(role).strip().upper()
+    return ROLE_ALIASES.get(normalized, normalized)
+
+
+def has_role(user, *roles):
+    return bool(user) and normalize_role(getattr(user, "role", None)) in {
+        normalize_role(role) for role in roles
+    }
+
 
 def is_admin(user):
-
-    return (
-        user and
-        str(user.role).strip().upper()
-        in ["ADMIN", "ADMINISTRATEUR"]
-    )
+    return has_role(user, "ADMIN")
 
 
 def is_auditeur(user):
-
-    return (
-        user and
-        str(user.role).strip().upper()
-        == "AUDITEUR"
-    )
+    return has_role(user, "AUDITEUR")
 
 
 def is_comptable(user):
-
-    return (
-        user and
-        str(user.role).strip().upper()
-        == "COMPTABLE"
-    )
+    return has_role(user, "COMPTABLE")
 
 
 def is_client(user):
+    return has_role(user, "CLIENT")
 
-    return (
-        user and
-        str(user.role).strip().upper()
-        == "CLIENT"
+
+def _error(message, status=400):
+    return Response({"error": message}, status=status)
+
+
+def _build_media_url(request, field):
+    if not field:
+        return None
+
+    try:
+        url = field.url
+    except Exception:
+        return None
+
+    if request is None:
+        return url
+
+    return request.build_absolute_uri(url)
+
+
+def _get_role_label(role):
+    for code, label in Utilisateur.ROLE_CHOICES:
+        if normalize_role(code) == normalize_role(role):
+            return label
+    return role
+
+
+def _get_account_status(user):
+    if getattr(user, "is_banned", False):
+        return "BANNED"
+    if getattr(user, "is_suspended", False):
+        return "SUSPENDED"
+    if getattr(user, "is_verified", False):
+        return "VERIFIED"
+    return "ACTIVE"
+
+
+def serialize_user(user, request=None):
+    full_name = " ".join(
+        part for part in [user.nom, user.prenom or ""] if part
+    ).strip()
+
+    return {
+        "id": user.id,
+        "nom": user.nom,
+        "prenom": user.prenom or "",
+        "full_name": full_name or user.nom,
+        "telephone": user.telephone or "",
+        "bio": user.bio or "",
+        "avatar": _build_media_url(request, getattr(user, "avatar", None)),
+        "email": user.email,
+        "role": normalize_role(user.role),
+        "role_label": _get_role_label(user.role),
+        "balance": user.balance,
+        "is_verified": user.is_verified,
+        "is_suspended": user.is_suspended,
+        "is_banned": user.is_banned,
+        "status": _get_account_status(user),
+        "last_login": user.last_login,
+        "last_logout": user.last_logout,
+        "last_ip": user.last_ip,
+    }
+
+
+def _send_live_notification(message):
+    try:
+        from notifications.views import send_live_notification
+
+        send_live_notification(message)
+    except Exception:
+        pass
+
+
+def _notify_user(user, title, message, notification_type="info", live_message=None):
+    Notification.objects.create(
+        utilisateur=user,
+        title=title,
+        message=message,
+        type=notification_type,
     )
 
+    _send_live_notification(live_message or message)
 
-# =====================================================
-# LOGS
-# =====================================================
 
 def create_log(user, action, target=None):
-
     try:
-
-        suspicious_actions = [
-
-            "DELETE_USER",
-
-            "BAN_USER",
-
-            "RESET_PASSWORD",
-
-            "REJECT_TRANSACTION",
-
-            "SUSPEND_USER"
-        ]
-
-        is_suspicious = (
-            action in suspicious_actions
-        )
+        is_suspicious = action in SUSPICIOUS_ACTIONS
 
         Log.objects.create(
-
             utilisateur=user,
-
             action=action,
-
-            description=target,
-
-            is_suspicious=is_suspicious
+            description=target or "",
+            is_suspicious=is_suspicious,
         )
 
-        # ==========================
-        # SECURITY ALERT
-        # ==========================
-        if is_suspicious:
-
-            Notification.objects.create(
-
-                utilisateur=user,
-
-                title="ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Security Alert",
-
-                message=(
-                    f"Suspicious action detected: {action}"
-                ),
-
-                type="danger"
+        if is_suspicious and user:
+            _notify_user(
+                user,
+                "Security Alert",
+                f"Suspicious action detected: {action}",
+                "danger",
             )
+    except Exception:
+        pass
 
-    except Exception as e:
-
-        print(
-            "LOG ERROR =>",
-            e
-        )
-        send_live_notification(
-    f"ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Suspicious action detected: {action}"
-)
-
-# =====================================================
-# SEND OTP
-# =====================================================
 
 def send_otp_email(user):
-
     try:
-
-        otp = str(
-            random.randint(100000, 999999)
-        )
-
+        otp = str(__import__("random").randint(100000, 999999))
         user.otp_code = otp
-
-        user.save()
+        user.otp_created_at = timezone.now()
+        user.save(update_fields=["otp_code", "otp_created_at"])
 
         if settings.DEMO_OTP_MODE and not has_email_provider_configured():
-
             return otp
 
         send_system_email(
@@ -148,1570 +189,687 @@ def send_otp_email(user):
             subject="Your OTP Code",
             message=f"Your verification code is: {otp}",
             html_message=(
-                f"<div style='font-family:Arial,sans-serif'>"
-                f"<h2>Nexora verification</h2>"
-                f"<p>Your verification code is:</p>"
+                "<div style='font-family:Arial,sans-serif'>"
+                "<h2>Nexora verification</h2>"
+                "<p>Your verification code is:</p>"
                 f"<p style='font-size:28px;font-weight:bold;letter-spacing:4px;'>{otp}</p>"
-                f"</div>"
-            )
+                "</div>"
+            ),
         )
-
         return otp
-
-    except EmailServiceError as e:
-
-        print(
-            "OTP ERROR =>",
-            str(e)
-        )
-
+    except EmailServiceError:
         return None
-# =====================================================
-# HELPERS
-# =====================================================
+
 
 def get_client_ip(request):
+    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
 
-    return request.META.get(
-        "REMOTE_ADDR"
-    )
-
-
-# =====================================================
-# HELPERS
-# =====================================================
-
-def get_client_ip(request):
-
-    return request.META.get(
-        "REMOTE_ADDR"
-    )
 
 def get_current_user(request):
-
     try:
-
         jwt_auth = JWTAuthentication()
-
-        # ==========================
-        # GET HEADER
-        # ==========================
-        header = jwt_auth.get_header(
-            request
-        )
-        print("HEADER =>", header)
+        header = jwt_auth.get_header(request)
         if header is None:
+            return None, _error("Token manquant", 401)
 
-            return None, Response(
-                {"error": "Token manquant"},
-                status=401
-            )
-
-        # ==========================
-        # GET RAW TOKEN
-        # ==========================
-        raw_token = jwt_auth.get_raw_token(
-            header
-        )
-        print("RAW TOKEN =>", raw_token)
+        raw_token = jwt_auth.get_raw_token(header)
         if raw_token is None:
+            return None, _error("Token invalide", 401)
 
-            return None, Response(
-                {"error": "Raw token manquant"},
-                status=401
-            )
-
-        # ==========================
-        # VALIDATE TOKEN
-        # ==========================
-        validated_token = (
-            jwt_auth.get_validated_token(
-                raw_token
-            )
+        validated_token = jwt_auth.get_validated_token(raw_token)
+        user_id = (
+            validated_token.get("user_id")
+            or validated_token.get("id")
+            or getattr(validated_token, "payload", {}).get("user_id")
         )
-        print(validated_token)
-        # ==========================
-        # GET USER ID
-        # ==========================
-        user_id = None
-
-        if "user_id" in validated_token:
-
-            user_id = validated_token[
-                "user_id"
-            ]
-
-        elif "id" in validated_token:
-
-            user_id = validated_token[
-                "id"
-            ]
-
-        elif hasattr(
-            validated_token,
-            "payload"
-        ):
-
-            user_id = validated_token.payload.get(
-                "user_id"
-            )
 
         if not user_id:
+            return None, _error("Token invalide", 401)
 
-            return None, Response(
-                {
-                    "error":
-                    "Invalid token payload"
-                },
-                status=401
-            )
-
-        # ==========================
-        # GET USER
-        # ==========================
-        user = Utilisateur.objects.filter(
-            id=int(user_id)
-        ).first()
-
+        user = Utilisateur.objects.filter(id=int(user_id)).first()
         if not user:
+            return None, _error("Utilisateur introuvable", 401)
 
-            return None, Response(
-                {
-                    "error":
-                    "User not found"
-                },
-                status=401
-            )
-
-        # ==========================
-        # ATTACH USER
-        # ==========================
         request.user = user
-
         return user, None
+    except Exception:
+        return None, _error("Token invalide", 401)
 
-    except Exception as e:
 
-        print(
-            "JWT ERROR =>",
-            str(e)
-        )
+def _require_auth(request):
+    return get_current_user(request)
 
-        return None, Response(
-            {
-                "error":
-                "Token invalide"
-            },
-            status=401
-        )
 
-# =====================================================
-# CHECK ADMIN
-# =====================================================
+def _require_admin(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return None, error
+    if not is_admin(current_user):
+        return None, _error("Accès refusé", 403)
+    return current_user, None
 
-@api_view(['GET'])
+
+def _get_manageable_roles():
+    existing_roles = {
+        normalize_role(code) for code, _label in Utilisateur.ROLE_CHOICES
+    }
+    return sorted(existing_roles.intersection(MANAGEABLE_ROLES))
+
+
+def _parse_bool(value):
+    if value is None:
+        return None
+    return str(value).strip().lower() in {"1", "true", "yes", "oui"}
+
+
+def _find_user_or_404(user_id):
+    user = Utilisateur.objects.filter(id=user_id).first()
+    if not user:
+        return None, _error("Utilisateur introuvable", 404)
+    return user, None
+
+
+def _user_search_queryset(search):
+    if not search:
+        return Q()
+
+    return (
+        Q(nom__icontains=search)
+        | Q(prenom__icontains=search)
+        | Q(email__icontains=search)
+        | Q(telephone__icontains=search)
+    )
+
+
+@api_view(["GET"])
 def check_admin_exists(request):
-
-    exists = Utilisateur.objects.filter(
-        role="ADMIN"
-    ).exists()
-
-    return Response({
-        "exists": exists
-    })
+    exists = Utilisateur.objects.filter(role__in=["ADMIN", "ADMINISTRATEUR"]).exists()
+    return Response({"exists": exists})
 
 
-# =====================================================
-# USERS
-# =====================================================
-
-# =====================================================
-# USERS
-# =====================================================
-
-@api_view(['GET'])
+@api_view(["GET"])
 def get_users(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    search = request.GET.get("search", "").strip()
+    role = normalize_role(request.GET.get("role"))
+    status = normalize_role(request.GET.get("status"))
+    verified = _parse_bool(request.GET.get("verified"))
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
+    users = Utilisateur.objects.all().order_by("-id")
 
-    users = Utilisateur.objects.all()
+    if search:
+        users = users.filter(_user_search_queryset(search))
 
-    return Response([
+    if role and role != "ALL":
+        users = users.filter(role=role)
 
-        {
-            "id": u.id,
+    if status and status != "ALL":
+        if status == "BANNED":
+            users = users.filter(is_banned=True)
+        elif status == "SUSPENDED":
+            users = users.filter(is_suspended=True, is_banned=False)
+        elif status == "VERIFIED":
+            users = users.filter(is_verified=True, is_banned=False, is_suspended=False)
+        elif status == "ACTIVE":
+            users = users.filter(is_banned=False, is_suspended=False)
 
-            "nom": u.nom,
+    if verified is not None:
+        users = users.filter(is_verified=verified)
 
-            "prenom": getattr(
-                u,
-                "prenom",
-                ""
-            ),
-
-            "telephone": getattr(
-                u,
-                "telephone",
-                ""
-            ),
-
-            "bio": getattr(
-                u,
-                "bio",
-                ""
-            ),
-
-            "avatar": (
-                request.build_absolute_uri(
-                    u.avatar.url
-                )
-                if getattr(u, "avatar", None)
-                else None
-            ),
-
-            "email": u.email,
-
-            "role": u.role,
-
-            "is_suspended": getattr(
-                u,
-                "is_suspended",
-                False
-            ),
-
-            "is_banned": getattr(
-                u,
-                "is_banned",
-                False
-            ),
-        }
-
-        for u in users
-    ])
+    return Response([serialize_user(user, request) for user in users])
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 def get_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
+    return Response(serialize_user(user, request))
 
-    try:
 
-        user = Utilisateur.objects.get(id=id)
-
-    except Utilisateur.DoesNotExist:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
-
-    return Response({
-
-        "id": user.id,
-
-        "nom": user.nom,
-
-        "prenom": getattr(
-            user,
-            "prenom",
-            ""
-        ),
-
-        "telephone": getattr(
-            user,
-            "telephone",
-            ""
-        ),
-
-        "bio": getattr(
-            user,
-            "bio",
-            ""
-        ),
-
-        "avatar": (
-            request.build_absolute_uri(
-                user.avatar.url
-            )
-            if getattr(user, "avatar", None)
-            else None
-        ),
-
-        "email": user.email,
-
-        "role": user.role,
-
-        "is_suspended": getattr(
-            user,
-            "is_suspended",
-            False
-        ),
-
-        "is_banned": getattr(
-            user,
-            "is_banned",
-            False
-        ),
-    })
-
-# =====================================================
-# CREATE USER
-# =====================================================
-
-@api_view(['POST'])
+@api_view(["POST"])
 def create_user(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
-
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
     data = request.data.copy()
+    email = str(data.get("email", "")).strip().lower()
+    password = data.get("password")
+    role = normalize_role(data.get("role"))
 
-    # normalize email
-    if "email" in data:
+    if not email or not password or not data.get("nom"):
+        return _error("Les champs nom, email et mot de passe sont obligatoires.", 400)
 
-        data["email"] = (
-            data["email"]
-            .strip()
-            .lower()
-        )
+    if role not in _get_manageable_roles():
+        return _error("Rôle invalide.", 400)
 
-    # hash password
-    data["password"] = make_password(
-        data.get("password")
-    )
+    if Utilisateur.objects.filter(email=email).exists():
+        return _error("Cet email est déjà utilisé.", 400)
 
-    serializer = UtilisateurSerializer(
-        data=data
-    )
+    data["email"] = email
+    data["role"] = role
+    data["password"] = make_password(password)
 
-    if serializer.is_valid():
+    serializer = UtilisateurSerializer(data=data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
 
-        new_user = serializer.save()
+    new_user = serializer.save()
+    create_log(current_user, "CREATE_USER", f"user_id={new_user.id}")
 
-        create_log(
-            current_user,
-            "CREATE_USER",
-            f"user_id={new_user.id}"
-        )
-
-        return Response(
-            serializer.data,
-            status=201
-        )
-
-    return Response(
-        serializer.errors,
-        status=400
-    )
+    return Response(serialize_user(new_user, request), status=201)
 
 
-# =====================================================
-# UPDATE USER
-# =====================================================
-
-@api_view(['PUT'])
+@api_view(["PUT"])
 def update_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
-
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
     data = request.data.copy()
-
-    # normalize email
     if "email" in data:
+        data["email"] = str(data["email"]).strip().lower()
 
-        data["email"] = (
-            data["email"]
-            .strip()
-            .lower()
-        )
+    if "role" in data:
+        data["role"] = normalize_role(data["role"])
+        if data["role"] not in _get_manageable_roles():
+            return _error("Rôle invalide.", 400)
 
-    # hash password
-    if "password" in data and data["password"]:
+    if data.get("password"):
+        data["password"] = make_password(data["password"])
+    else:
+        data.pop("password", None)
 
-        data["password"] = make_password(
-            data["password"]
-        )
+    serializer = UtilisateurSerializer(user, data=data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
 
-    serializer = UtilisateurSerializer(
-        user,
-        data=data,
-        partial=True
-    )
+    serializer.save()
+    create_log(current_user, "UPDATE_USER", f"user_id={user.id}")
 
-    if serializer.is_valid():
-
-        serializer.save()
-
-        create_log(
-            current_user,
-            "UPDATE_USER",
-            f"user_id={user.id}"
-        )
-
-        return Response(
-            serializer.data
-        )
-
-    return Response(
-        serializer.errors,
-        status=400
-    )
+    return Response(serialize_user(user, request))
 
 
-# =====================================================
-# DELETE USER
-# =====================================================
-
-@api_view(['DELETE'])
+@api_view(["DELETE"])
 def delete_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
+    if user.id == current_user.id:
+        return _error("Vous ne pouvez pas supprimer votre propre compte.", 400)
 
     user.delete()
+    create_log(current_user, "DELETE_USER", f"user_id={id}")
 
-    create_log(
-        current_user,
-        "DELETE_USER",
-        f"user_id={id}"
-    )
-
-    return Response({
-        "message":
-        "Utilisateur supprimÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-    })
+    return Response({"message": "Utilisateur supprimé avec succès."})
 
 
-# =====================================================
-# LOGS
-# =====================================================
-
-# =====================================================
-# LOGS
-# =====================================================
-
-@api_view(['GET'])
+@api_view(["GET"])
 def get_logs(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_auth(request)
     if error:
         return error
 
-    if not (
-        is_admin(current_user)
-        or
-        is_auditeur(current_user)
-    ):
+    if not (is_admin(current_user) or is_auditeur(current_user)):
+        return _error("Accès refusé", 403)
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
+    search = request.GET.get("search", "").strip()
+    action = request.GET.get("action", "ALL").strip().upper()
+    start = request.GET.get("start")
+    end = request.GET.get("end")
+    suspicious = _parse_bool(request.GET.get("suspicious"))
 
-    # ==========================
-    # QUERY PARAMS
-    # ==========================
-    action = request.GET.get(
-        "action",
-        "ALL"
-    )
+    logs = Log.objects.select_related("utilisateur").all()
 
-    start = request.GET.get(
-        "start"
-    )
-
-    end = request.GET.get(
-        "end"
-    )
-
-    search = request.GET.get(
-        "search",
-        ""
-    )
-
-    # ==========================
-    # BASE QUERY
-    # ==========================
-    logs = Log.objects.all()
-
-    # ==========================
-    # FILTER ACTION
-    # ==========================
-    if action != "ALL":
-
-        logs = logs.filter(
-            action=action
-        )
-
-    # ==========================
-    # FILTER START DATE
-    # ==========================
+    if action and action != "ALL":
+        logs = logs.filter(action=action)
     if start:
-
-        logs = logs.filter(
-            date__date__gte=start
-        )
-
-    # ==========================
-    # FILTER END DATE
-    # ==========================
+        logs = logs.filter(date__date__gte=start)
     if end:
-
-        logs = logs.filter(
-            date__date__lte=end
-        )
-
-    # ==========================
-    # SEARCH
-    # ==========================
+        logs = logs.filter(date__date__lte=end)
     if search:
-
         logs = logs.filter(
-            action__icontains=search
-        ) | logs.filter(
-            description__icontains=search
-        ) | logs.filter(
-            utilisateur__nom__icontains=search
+            Q(action__icontains=search)
+            | Q(description__icontains=search)
+            | Q(utilisateur__nom__icontains=search)
+            | Q(utilisateur__email__icontains=search)
         )
+    if suspicious is not None:
+        logs = logs.filter(is_suspicious=suspicious)
 
-    # ==========================
-    # ORDER
-    # ==========================
-    logs = logs.order_by(
-        '-date'
-    )[:200]
-
-    # ==========================
-    # RESPONSE
-    # ==========================
-    return Response([
-
-        {
-            "id": l.id,
-
-            "user": (
-                l.utilisateur.nom
-                if l.utilisateur
-                else "Unknown"
-            ),
-
-            "action": l.action,
-
-            "description": l.description,
-
-            "date": l.date,
-
-"is_suspicious":
-l.is_suspicious
-        }
-
-        for l in logs
-    ])
-
-
-# =====================================================
-# AUDIT
-# =====================================================
-
-@api_view(['GET'])
-def get_audit(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    if not is_admin(current_user):
-
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    logs = Log.objects.all()
-
-    return Response({
-
-        "total_logs": logs.count(),
-
-        "create": logs.filter(
-            action="CREATE_USER"
-        ).count(),
-
-        "update": logs.filter(
-            action="UPDATE_USER"
-        ).count(),
-
-        "delete": logs.filter(
-            action="DELETE_USER"
-        ).count(),
-    })
-
-
-# =====================================================
-# PROFILE
-# =====================================================
-
-@api_view(['GET'])
-def get_my_profile(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    return Response({
-
-        "id": current_user.id,
-
-        "nom": current_user.nom,
-
-        "prenom": getattr(
-            current_user,
-            "prenom",
-            ""
-        ),
-
-        "telephone": getattr(
-            current_user,
-            "telephone",
-            ""
-        ),
-
-        "bio": getattr(
-            current_user,
-            "bio",
-            ""
-        ),
-
-        "avatar": (
-            request.build_absolute_uri(
-                current_user.avatar.url
-            )
-            if getattr(current_user, "avatar", None)
-            else None
-        ),
-
-        "email": current_user.email,
-
-        "role": current_user.role,
-
-        "last_login":
-        current_user.last_login,
-
-        "last_ip":
-        current_user.last_ip
-    })
-
-
-@api_view(['PUT'])
-def update_my_profile(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    data = request.data.copy()
-
-    # normalize email
-    if "email" in data:
-
-        data["email"] = (
-            data["email"]
-            .strip()
-            .lower()
-        )
-
-    # hash password
-    if "password" in data and data["password"]:
-
-        data["password"] = make_password(
-            data["password"]
-        )
-
-    serializer = UtilisateurSerializer(
-        current_user,
-        data=data,
-        partial=True
-    )
-
-    if serializer.is_valid():
-
-        serializer.save()
-
-        create_log(
-            current_user,
-            "UPDATE_PROFILE",
-            f"user_id={current_user.id}"
-        )
-
-        return Response(
-            serializer.data
-        )
+    logs = logs.order_by("-date")[:200]
 
     return Response(
-        serializer.errors,
-        status=400
+        [
+            {
+                "id": log.id,
+                "user": log.utilisateur.nom if log.utilisateur else "Unknown",
+                "action": log.action,
+                "description": log.description,
+                "date": log.date,
+                "is_suspicious": log.is_suspicious,
+            }
+            for log in logs
+        ]
     )
 
 
-# =====================================================
-# MY LOGS
-# =====================================================
-
-@api_view(['GET'])
-def get_my_logs(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+@api_view(["GET"])
+def get_audit(request):
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    logs = Log.objects.filter(
-        utilisateur=current_user
-    ).order_by('-date')[:50]
+    logs = Log.objects.all()
 
-    return Response([
-
+    return Response(
         {
-            "id": l.id,
-
-            "action": l.action,
-
-            "description": l.description,
-
-            "date": l.date
+            "total_logs": logs.count(),
+            "create": logs.filter(action="CREATE_USER").count(),
+            "update": logs.filter(action="UPDATE_USER").count(),
+            "delete": logs.filter(action="DELETE_USER").count(),
+            "suspicious": logs.filter(is_suspicious=True).count(),
+            "recent_logins": logs.filter(action="LOGIN").count(),
         }
-
-        for l in logs
-    ])
-
-
-# =====================================================
-# LOGIN TRACK
-# =====================================================
-
-@api_view(['POST'])
-def track_login(request):
-
-    current_user, error = get_current_user(
-        request
     )
 
+
+@api_view(["GET"])
+def get_my_profile(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    return Response(serialize_user(current_user, request))
+
+
+@api_view(["PUT"])
+def update_my_profile(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    allowed_fields = {"nom", "prenom", "email", "telephone", "bio", "avatar", "password"}
+    data = {key: value for key, value in request.data.items() if key in allowed_fields}
+
+    if "email" in data:
+        data["email"] = str(data["email"]).strip().lower()
+
+    if data.get("password"):
+        data["password"] = make_password(data["password"])
+    else:
+        data.pop("password", None)
+
+    serializer = UtilisateurSerializer(current_user, data=data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=400)
+
+    serializer.save()
+    create_log(current_user, "UPDATE_PROFILE", f"user_id={current_user.id}")
+
+    return Response(serialize_user(current_user, request))
+
+
+@api_view(["GET"])
+def get_my_logs(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    logs = Log.objects.filter(utilisateur=current_user).order_by("-date")[:50]
+    return Response(
+        [
+            {
+                "id": log.id,
+                "action": log.action,
+                "description": log.description,
+                "date": log.date,
+                "is_suspicious": log.is_suspicious,
+            }
+            for log in logs
+        ]
+    )
+
+
+@api_view(["GET"])
+def get_my_alerts(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    logs = Log.objects.filter(utilisateur=current_user)
+    alerts = []
+
+    if logs.count() > 20:
+        alerts.append("Activité élevée détectée sur votre compte.")
+    if logs.filter(action="DELETE_USER").count() > 3:
+        alerts.append("Plusieurs suppressions ont été détectées.")
+    if logs.filter(action="LOGIN").count() > 10:
+        alerts.append("Le nombre de connexions est inhabituel.")
+
+    return Response({"alerts": alerts})
+
+
+@api_view(["GET"])
+def get_my_stats(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    logs = Log.objects.filter(utilisateur=current_user)
+    return Response(
+        {
+            "total": logs.count(),
+            "create": logs.filter(action="CREATE_USER").count(),
+            "update": logs.filter(action="UPDATE_USER").count(),
+            "delete": logs.filter(action="DELETE_USER").count(),
+            "login": logs.filter(action="LOGIN").count(),
+        }
+    )
+
+
+@api_view(["GET"])
+def detect_anomalies(request):
+    current_user, error = _require_admin(request)
+    if error:
+        return error
+
+    logs = Log.objects.all()
+    anomalies = []
+
+    if logs.count() > 100:
+        anomalies.append("L'activité du système est très élevée.")
+    if logs.filter(action="DELETE_USER").count() > 5:
+        anomalies.append("Le nombre de suppressions est anormalement élevé.")
+    if logs.filter(action="LOGIN").count() > 20:
+        anomalies.append("Le nombre de connexions est anormalement élevé.")
+
+    return Response({"anomalies": anomalies})
+
+
+@api_view(["GET"])
+def detect_suspicious_behavior(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    logs = Log.objects.filter(utilisateur=current_user)
+    alerts = []
+    deletes = logs.filter(action="DELETE_USER").count()
+    logins = logs.filter(action="LOGIN").count()
+
+    if logs.count() > 30:
+        alerts.append("Activité inhabituelle détectée.")
+    if deletes > 3:
+        alerts.append("Comportement de suppression suspect détecté.")
+    if logins > 10:
+        alerts.append("Trop de tentatives de connexion détectées.")
+
+    for alert in alerts:
+        Notification.objects.create(
+            utilisateur=current_user,
+            title="Security Alert",
+            message=alert,
+            type="danger",
+        )
+
+    return Response({"alerts": alerts, "score": len(alerts)})
+
+
+@api_view(["POST"])
+def track_login(request):
+    current_user, error = _require_auth(request)
     if error:
         return error
 
     current_user.last_login = timezone.now()
+    current_user.last_ip = get_client_ip(request)
+    current_user.save(update_fields=["last_login", "last_ip"])
 
-    current_user.last_ip = get_client_ip(
-        request
-    )
+    create_log(current_user, "LOGIN", "User login")
+    return Response({"status": "ok"})
 
-    current_user.save()
 
-    create_log(
-        current_user,
-        "LOGIN",
-        "User login"
-    )
-
-    return Response({
-        "status": "ok"
-    })
-
-
-# =====================================================
-# ALERTS
-# =====================================================
-
-@api_view(['GET'])
-def get_my_alerts(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    logs = Log.objects.filter(
-        utilisateur=current_user
-    )
-
-    alerts = []
-
-    if logs.count() > 20:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â High activity detected"
-        )
-
-    if logs.filter(
-        action="DELETE_USER"
-    ).count() > 3:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Suspicious deletions"
-        )
-
-    if logs.filter(
-        action="LOGIN"
-    ).count() > 10:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many logins"
-        )
-
-    return Response({
-        "alerts": alerts
-    })
-
-
-# =====================================================
-# STATS
-# =====================================================
-
-@api_view(['GET'])
-def get_my_stats(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    logs = Log.objects.filter(
-        utilisateur=current_user
-    )
-
-    return Response({
-
-        "total": logs.count(),
-
-        "create": logs.filter(
-            action="CREATE_USER"
-        ).count(),
-
-        "update": logs.filter(
-            action="UPDATE_USER"
-        ).count(),
-
-        "delete": logs.filter(
-            action="DELETE_USER"
-        ).count(),
-
-        "login": logs.filter(
-            action="LOGIN"
-        ).count()
-    })
-
-
-# =====================================================
-# ANOMALIES
-# =====================================================
-
-@api_view(['GET'])
-def detect_anomalies(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    if not is_admin(current_user):
-
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    logs = Log.objects.all()
-
-    anomalies = []
-
-    if logs.count() > 100:
-
-        anomalies.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â High system activity"
-        )
-
-    if logs.filter(
-        action="DELETE_USER"
-    ).count() > 5:
-
-        anomalies.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Too many deletions"
-        )
-
-    if logs.filter(
-        action="LOGIN"
-    ).count() > 20:
-
-        anomalies.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many logins"
-        )
-
-    return Response({
-        "anomalies": anomalies
-    })
-
-
-# =====================================================
-# SUSPICIOUS BEHAVIOR
-# =====================================================
-
-@api_view(['GET'])
-def detect_suspicious_behavior(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    logs = Log.objects.filter(
-        utilisateur=current_user
-    )
-
-    alerts = []
-
-    total = logs.count()
-
-    deletes = logs.filter(
-        action="DELETE_USER"
-    ).count()
-
-    logins = logs.filter(
-        action="LOGIN"
-    ).count()
-
-    if total > 30:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Unusual high activity"
-        )
-
-    if deletes > 3:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ Suspicious delete behavior"
-        )
-
-    if logins > 10:
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Too many login attempts"
-        )
-
-    actions = logs.values_list(
-        "action",
-        flat=True
-    )
-
-    if list(actions).count(
-        "DELETE_USER"
-    ) > list(actions).count(
-        "CREATE_USER"
-    ):
-
-        alerts.append(
-            "ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨ More deletes than creates"
-        )
-    # ==========================
-    # SECURITY NOTIFICATIONS
-    # ==========================
-    for alert in alerts:
-
-        Notification.objects.create(
-
-            utilisateur=current_user,
-
-            title="Security Alert",
-
-            message=alert,
-
-            type="danger"
-        )
-    return Response({
-
-        "alerts": alerts,
-
-        "score": len(alerts)
-    })
-@api_view(['POST'])
+@api_view(["POST"])
 def suspend_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
+    if user.id == current_user.id:
+        return _error("Vous ne pouvez pas suspendre votre propre compte.", 400)
 
     user.is_suspended = True
-    user.save()
+    user.save(update_fields=["is_suspended"])
 
-    Notification.objects.create(
+    _notify_user(user, "Compte suspendu", "Votre compte a été suspendu.", "warning")
+    create_log(current_user, "SUSPEND_USER", f"user_id={user.id}")
 
-        utilisateur=user,
+    return Response({"message": "Utilisateur suspendu avec succès."})
 
-        title="Compte suspendu",
 
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© suspendu",
-
-        type="warning"
-    )
-    from notifications.views import (
-    send_live_notification
-)
-    send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© suspendu"
-)
-    create_log(
-        current_user,
-        "SUSPEND_USER",
-        f"user_id={user.id}"
-    )
-
-    return Response({
-        "message": "Utilisateur suspendu"
-    })
-@api_view(['POST'])
+@api_view(["POST"])
 def activate_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
-
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
     user.is_suspended = False
     user.is_banned = False
+    user.save(update_fields=["is_suspended", "is_banned"])
 
-    user.save()
+    _notify_user(user, "Compte activé", "Votre compte a été réactivé.", "success")
+    create_log(current_user, "ACTIVATE_USER", f"user_id={user.id}")
 
-    Notification.objects.create(
+    return Response({"message": "Utilisateur réactivé avec succès."})
 
-        utilisateur=user,
 
-        title="Compte activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-        type="success"
-    )
-
-    create_log(
-        current_user,
-        "ACTIVATE_USER",
-        f"user_id={user.id}"
-    )
-
-    return Response({
-        "message": "Utilisateur activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-    })
-from notifications.views import (
-    send_live_notification
-)
-send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© activÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-)
-@api_view(['POST'])
+@api_view(["POST"])
 def ban_user(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
+    if user.id == current_user.id:
+        return _error("Vous ne pouvez pas bannir votre propre compte.", 400)
 
     user.is_banned = True
+    user.save(update_fields=["is_banned"])
 
-    user.save()
+    _notify_user(user, "Compte banni", "Votre compte a été banni.", "danger")
+    create_log(current_user, "BAN_USER", f"user_id={user.id}")
 
-    Notification.objects.create(
+    return Response({"message": "Utilisateur banni avec succès."})
 
-        utilisateur=user,
 
-        title="Compte banni",
-
-        message="Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© banni",
-
-        type="danger"
-    )
-    from notifications.views import (
-    send_live_notification
-)
-    send_live_notification(
-    "Votre compte a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© banni"
-)
-    create_log(
-        current_user,
-        "BAN_USER",
-        f"user_id={user.id}"
-    )
-
-    return Response({
-        "message": "Utilisateur banni"
-    })
-
-@api_view(['POST'])
+@api_view(["POST"])
 def change_role(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
+    if user.id == current_user.id:
+        return _error("Vous ne pouvez pas modifier votre propre rôle.", 400)
 
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
-
-    role = request.data.get(
-        "role"
-    )
-
-    allowed_roles = [
-
-        "ADMIN",
-        "AUDITEUR",
-        "COMPTABLE",
-        "CLIENT"
-    ]
-
-    if role not in allowed_roles:
-
-        return Response({
-            "error": "RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le invalide"
-        }, status=400)
+    role = normalize_role(request.data.get("role"))
+    if role not in _get_manageable_roles():
+        return _error("Rôle invalide.", 400)
 
     user.role = role
+    user.save(update_fields=["role"])
 
-    user.save()
-
-    Notification.objects.create(
-
-        utilisateur=user,
-
-        title="RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-        message=f"Nouveau rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le: {role}",
-
-        type="info"
+    _notify_user(
+        user,
+        "Rôle modifié",
+        f"Votre rôle est maintenant: {role}.",
+        "info",
     )
+    create_log(current_user, "CHANGE_ROLE", f"user_id={user.id};role={role}")
 
-    create_log(
-        current_user,
-        "CHANGE_ROLE",
-        f"user_id={user.id}"
-    )
+    return Response({"message": "Rôle modifié avec succès.", "role": role})
 
-    return Response({
-        "message": "RÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â´le modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-    })
 
-@api_view(['POST'])
+@api_view(["POST"])
 def reset_password(request, id):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_admin(request)
     if error:
         return error
 
-    if not is_admin(current_user):
+    user, error = _find_user_or_404(id)
+    if error:
+        return error
 
-        return Response({
-            "error": "AccÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¨s refusÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
-        }, status=403)
-
-    user = Utilisateur.objects.filter(
-        id=id
-    ).first()
-
-    if not user:
-
-        return Response({
-            "error": "Utilisateur introuvable"
-        }, status=404)
-
-    new_password = request.data.get(
-        "password"
-    )
-
+    new_password = request.data.get("password")
     if not new_password:
+        return _error("Le nouveau mot de passe est requis.", 400)
 
-        return Response({
-            "error": "Password required"
-        }, status=400)
+    user.password = make_password(new_password)
+    user.save(update_fields=["password"])
 
-    user.password = make_password(
-        new_password
+    _notify_user(
+        user,
+        "Mot de passe réinitialisé",
+        "Votre mot de passe a été réinitialisé par un administrateur.",
+        "warning",
+        "Password reset",
     )
+    create_log(current_user, "RESET_PASSWORD", f"user_id={user.id}")
 
-    user.save()
+    return Response({"message": "Mot de passe réinitialisé avec succès."})
 
-    Notification.objects.create(
 
-        utilisateur=user,
-
-        title="Mot de passe modifiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-        message="Votre mot de passe a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©initialisÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-
-        type="warning"
-    )
-    from notifications.views import (
-    send_live_notification
-)
-    send_live_notification(
-    "Password reset"
-)
-    create_log(
-        current_user,
-        "RESET_PASSWORD",
-        f"user_id={user.id}"
-    )
-
-    return Response({
-        "message": "Password reset"
-    })
-
-# =====================================================
-# FORGOT PASSWORD
-# =====================================================
-
-@api_view(['POST'])
+@api_view(["POST"])
 def forgot_password(request):
-
-    email = request.data.get(
-        "email"
-    )
-
+    email = str(request.data.get("email", "")).strip().lower()
     if not email:
+        return _error("Email requis.", 400)
 
-        return Response({
-
-            "error":
-            "Email required"
-
-        }, status=400)
-
-    user = Utilisateur.objects.filter(
-        email=email
-    ).first()
-
+    user = Utilisateur.objects.filter(email=email).first()
     if not user:
-
-        return Response({
-
-            "error":
-            "User not found"
-
-        }, status=404)
+        return _error("Utilisateur introuvable.", 404)
 
     otp = send_otp_email(user)
-
     if not otp:
+        return _error("Le service OTP est indisponible pour le moment.", 503)
 
-        return Response({
-
-            "error":
-            "OTP email service unavailable"
-
-        }, status=503)
-
-    payload = {
-
-        "message": "OTP sent to email"
-
-    }
-
-    if settings.DEMO_OTP_MODE:
-
-        payload["message"] = "OTP generated (demo mode)"
-        payload["otp"] = otp
-        payload["demo_mode"] = True
+    payload = {"message": "OTP envoyé par email."}
+    if settings.DEMO_OTP_MODE and not has_email_provider_configured():
+        payload.update(
+            {
+                "message": "OTP généré en mode démonstration.",
+                "otp": otp,
+                "demo_mode": True,
+            }
+        )
 
     return Response(payload)
 
-# =====================================================
-# ACTIVITY TIMELINE
-# =====================================================
 
-@api_view(['GET'])
+@api_view(["GET"])
 def get_activity_timeline(request):
-
-    current_user, error = get_current_user(
-        request
-    )
-
+    current_user, error = _require_auth(request)
     if error:
         return error
 
     timeline = []
 
-    # ==========================
-    # LOGS
-    # ==========================
-    logs = Log.objects.filter(
-
-        utilisateur=current_user
-
-    ).order_by('-date')[:20]
-
+    logs = Log.objects.filter(utilisateur=current_user).order_by("-date")[:20]
     for log in logs:
-
-        timeline.append({
-
-            "type": "LOG",
-
-            "action": log.action,
-
-            "description":
-            log.description,
-
-            "date": log.date
-        })
-
-    # ==========================
-    # TRANSACTIONS
-    # ==========================
-    transactions = Transaction.objects.filter(
-
-        sender=current_user
-
-    ).order_by('-created_at')[:20]
-
-    for t in transactions:
-
-        timeline.append({
-
-            "type": "TRANSACTION",
-
-            "action": t.type,
-
-            "description":
-            f"{t.type} - {t.montant}",
-
-            "status": t.status,
-
-            "date": t.created_at
-        })
-
-    # ==========================
-    # SORT
-    # ==========================
-    timeline = sorted(
-
-        timeline,
-
-        key=lambda x: x["date"],
-
-        reverse=True
-    )
-
-    return Response(
-        timeline[:40]
-    )
-
-
-
-@api_view(['POST'])
-def register_client(request):
-
-    try:
-
-        email = request.data.get(
-            "email",
-            ""
-        ).strip().lower()
-
-        if Utilisateur.objects.filter(
-            email=email
-        ).exists():
-
-            return Response({
-                "error": "Email already exists"
-            }, status=400)
-
-        user = Utilisateur.objects.create(
-
-            nom=request.data.get("nom"),
-
-            prenom="",
-
-            telephone="",
-
-            bio="",
-
-            email=email,
-
-            password=make_password(
-                request.data.get("password")
-            ),
-
-            role="CLIENT"
+        timeline.append(
+            {
+                "type": "LOG",
+                "action": log.action,
+                "description": log.description,
+                "date": log.date,
+            }
         )
 
-        return Response({
-            "message": "Compte crÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©",
-            "id": user.id
-        }, status=201)
+    transactions = Transaction.objects.filter(
+        Q(sender=current_user) | Q(receiver=current_user)
+    ).order_by("-created_at")[:20]
 
-    except Exception as e:
+    for transaction in transactions:
+        timeline.append(
+            {
+                "type": "TRANSACTION",
+                "action": transaction.type,
+                "description": f"{transaction.type} - {transaction.montant}",
+                "status": transaction.status,
+                "date": transaction.created_at,
+            }
+        )
 
-        return Response({
-            "error": str(e)
-        }, status=500)
+    timeline.sort(key=lambda item: item["date"], reverse=True)
+    return Response(timeline[:40])
+
+
+@api_view(["POST"])
+def register_client(request):
+    try:
+        email = str(request.data.get("email", "")).strip().lower()
+        password = request.data.get("password")
+        nom = str(request.data.get("nom", "")).strip()
+
+        if not nom or not email or not password:
+            return _error("Les champs nom, email et mot de passe sont obligatoires.", 400)
+
+        if Utilisateur.objects.filter(email=email).exists():
+            return _error("Cet email est déjà utilisé.", 400)
+
+        user = Utilisateur.objects.create(
+            nom=nom,
+            prenom=str(request.data.get("prenom", "")).strip(),
+            telephone=str(request.data.get("telephone", "")).strip(),
+            bio="",
+            email=email,
+            password=make_password(password),
+            role="CLIENT",
+        )
+
+        return Response(
+            {
+                "message": "Compte client créé avec succès.",
+                "id": user.id,
+            },
+            status=201,
+        )
+    except Exception as exc:
+        return _error(str(exc), 500)
+
