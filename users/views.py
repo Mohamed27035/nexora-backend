@@ -38,6 +38,16 @@ SUSPICIOUS_ACTIONS = {
     "SUSPEND_USER",
 }
 
+CRITICAL_ACTIONS = {
+    "DELETE_USER",
+    "BAN_USER",
+    "RESET_PASSWORD",
+    "APPROVE_TRANSACTION",
+    "REJECT_TRANSACTION",
+    "APPROVE_KYC",
+    "REJECT_KYC",
+}
+
 
 def normalize_role(role):
     if role is None:
@@ -152,14 +162,36 @@ def _notify_user(user, title, message, notification_type="info", live_message=No
     _send_live_notification(live_message or message)
 
 
-def create_log(user, action, target=None):
+def create_log(
+    user,
+    action,
+    target=None,
+    *,
+    entity_type="",
+    entity_id="",
+    target_repr="",
+    severity=None,
+    metadata=None,
+):
     try:
         is_suspicious = action in SUSPICIOUS_ACTIONS
+        final_severity = severity or (
+            "CRITICAL" if action in CRITICAL_ACTIONS else
+            "WARNING" if is_suspicious else
+            "INFO"
+        )
+
+        payload = metadata or {}
 
         Log.objects.create(
             utilisateur=user,
             action=action,
             description=target or "",
+            entity_type=entity_type,
+            entity_id=str(entity_id or ""),
+            target_repr=target_repr,
+            severity=final_severity,
+            metadata=payload,
             is_suspicious=is_suspicious,
         )
 
@@ -367,7 +399,15 @@ def create_user(request):
         return Response(serializer.errors, status=400)
 
     new_user = serializer.save()
-    create_log(current_user, "CREATE_USER", f"user_id={new_user.id}")
+    create_log(
+        current_user,
+        "CREATE_USER",
+        f"user_id={new_user.id}",
+        entity_type="USER",
+        entity_id=new_user.id,
+        target_repr=new_user.email,
+        metadata={"role": new_user.role},
+    )
 
     return Response(serialize_user(new_user, request), status=201)
 
@@ -396,12 +436,28 @@ def update_user(request, id):
     else:
         data.pop("password", None)
 
+    previous_role = user.role
+    previous_email = user.email
+
     serializer = UtilisateurSerializer(user, data=data, partial=True)
     if not serializer.is_valid():
         return Response(serializer.errors, status=400)
 
     serializer.save()
-    create_log(current_user, "UPDATE_USER", f"user_id={user.id}")
+    create_log(
+        current_user,
+        "UPDATE_USER",
+        f"user_id={user.id}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={
+            "previous_role": previous_role,
+            "new_role": user.role,
+            "previous_email": previous_email,
+            "new_email": user.email,
+        },
+    )
 
     return Response(serialize_user(user, request))
 
@@ -420,7 +476,14 @@ def delete_user(request, id):
         return _error("Vous ne pouvez pas supprimer votre propre compte.", 400)
 
     user.delete()
-    create_log(current_user, "DELETE_USER", f"user_id={id}")
+    create_log(
+        current_user,
+        "DELETE_USER",
+        f"user_id={id}",
+        entity_type="USER",
+        entity_id=id,
+        target_repr=user.email,
+    )
 
     return Response({"message": "Utilisateur supprimé avec succès."})
 
@@ -526,7 +589,14 @@ def update_my_profile(request):
         return Response(serializer.errors, status=400)
 
     serializer.save()
-    create_log(current_user, "UPDATE_PROFILE", f"user_id={current_user.id}")
+    create_log(
+        current_user,
+        "UPDATE_PROFILE",
+        f"user_id={current_user.id}",
+        entity_type="USER",
+        entity_id=current_user.id,
+        target_repr=current_user.email,
+    )
 
     return Response(serialize_user(current_user, request))
 
@@ -647,7 +717,15 @@ def track_login(request):
     current_user.last_ip = get_client_ip(request)
     current_user.save(update_fields=["last_login", "last_ip"])
 
-    create_log(current_user, "LOGIN", "User login")
+    create_log(
+        current_user,
+        "LOGIN",
+        "User login",
+        entity_type="USER",
+        entity_id=current_user.id,
+        target_repr=current_user.email,
+        metadata={"ip": current_user.last_ip or ""},
+    )
     return Response({"status": "ok"})
 
 
@@ -668,7 +746,15 @@ def suspend_user(request, id):
     user.save(update_fields=["is_suspended"])
 
     _notify_user(user, "Compte suspendu", "Votre compte a été suspendu.", "warning")
-    create_log(current_user, "SUSPEND_USER", f"user_id={user.id}")
+    create_log(
+        current_user,
+        "SUSPEND_USER",
+        f"user_id={user.id}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={"user_id": user.id},
+    )
 
     return Response({"message": "Utilisateur suspendu avec succès."})
 
@@ -688,7 +774,15 @@ def activate_user(request, id):
     user.save(update_fields=["is_suspended", "is_banned"])
 
     _notify_user(user, "Compte activé", "Votre compte a été réactivé.", "success")
-    create_log(current_user, "ACTIVATE_USER", f"user_id={user.id}")
+    create_log(
+        current_user,
+        "ACTIVATE_USER",
+        f"user_id={user.id}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={"user_id": user.id},
+    )
 
     return Response({"message": "Utilisateur réactivé avec succès."})
 
@@ -710,7 +804,15 @@ def ban_user(request, id):
     user.save(update_fields=["is_banned"])
 
     _notify_user(user, "Compte banni", "Votre compte a été banni.", "danger")
-    create_log(current_user, "BAN_USER", f"user_id={user.id}")
+    create_log(
+        current_user,
+        "BAN_USER",
+        f"user_id={user.id}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={"user_id": user.id},
+    )
 
     return Response({"message": "Utilisateur banni avec succès."})
 
@@ -732,6 +834,7 @@ def change_role(request, id):
     if role not in _get_manageable_roles():
         return _error("Rôle invalide.", 400)
 
+    previous_role = user.role
     user.role = role
     user.save(update_fields=["role"])
 
@@ -741,7 +844,15 @@ def change_role(request, id):
         f"Votre rôle est maintenant: {role}.",
         "info",
     )
-    create_log(current_user, "CHANGE_ROLE", f"user_id={user.id};role={role}")
+    create_log(
+        current_user,
+        "CHANGE_ROLE",
+        f"user_id={user.id};role={role}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={"previous_role": previous_role, "new_role": role},
+    )
 
     return Response({"message": "Rôle modifié avec succès.", "role": role})
 
@@ -770,7 +881,15 @@ def reset_password(request, id):
         "warning",
         "Password reset",
     )
-    create_log(current_user, "RESET_PASSWORD", f"user_id={user.id}")
+    create_log(
+        current_user,
+        "RESET_PASSWORD",
+        f"user_id={user.id}",
+        entity_type="USER",
+        entity_id=user.id,
+        target_repr=user.email,
+        metadata={"user_id": user.id, "reset_by": current_user.id},
+    )
 
     return Response({"message": "Mot de passe réinitialisé avec succès."})
 
@@ -872,4 +991,3 @@ def register_client(request):
         )
     except Exception as exc:
         return _error(str(exc), 500)
-

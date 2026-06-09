@@ -10,7 +10,25 @@ class Log(models.Model):
         ("CREATE_USER", "Créer utilisateur"),
         ("UPDATE_USER", "Modifier utilisateur"),
         ("DELETE_USER", "Supprimer utilisateur"),
+        ("SUSPEND_USER", "Suspendre utilisateur"),
+        ("ACTIVATE_USER", "Réactiver utilisateur"),
+        ("BAN_USER", "Bannir utilisateur"),
+        ("CHANGE_ROLE", "Changer rôle"),
+        ("RESET_PASSWORD", "Réinitialiser mot de passe"),
+        ("UPDATE_PROFILE", "Mettre à jour profil"),
+        ("SUBMIT_KYC", "Soumettre KYC"),
+        ("APPROVE_KYC", "Approuver KYC"),
+        ("REJECT_KYC", "Rejeter KYC"),
+        ("CREATE_TRANSACTION", "Créer transaction"),
+        ("APPROVE_TRANSACTION", "Approuver transaction"),
+        ("REJECT_TRANSACTION", "Rejeter transaction"),
         ("GENERATE_REPORT", "Générer rapport"),
+    ]
+
+    SEVERITY_CHOICES = [
+        ("INFO", "Info"),
+        ("WARNING", "Warning"),
+        ("CRITICAL", "Critical"),
     ]
 
     utilisateur = models.ForeignKey(
@@ -20,6 +38,15 @@ class Log(models.Model):
     )
     action = models.CharField(max_length=50, choices=ACTION_CHOICES)
     description = models.TextField(blank=True)
+    entity_type = models.CharField(max_length=50, blank=True, default="")
+    entity_id = models.CharField(max_length=50, blank=True, default="")
+    target_repr = models.CharField(max_length=255, blank=True, default="")
+    severity = models.CharField(
+        max_length=20,
+        choices=SEVERITY_CHOICES,
+        default="INFO",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
     is_suspicious = models.BooleanField(default=False)
     date = models.DateTimeField(auto_now_add=True)
 

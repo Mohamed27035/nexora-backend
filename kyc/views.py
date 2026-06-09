@@ -296,7 +296,17 @@ def submit_kyc(request):
 
             "SUBMIT_KYC",
 
-            f"kyc_id={kyc.id}"
+            f"kyc_id={kyc.id}",
+            entity_type="KYC",
+            entity_id=kyc.id,
+            target_repr=kyc.utilisateur.email,
+            metadata={
+                "status": "PENDING",
+                "user_id": kyc.utilisateur_id,
+                "ocr_complete": bool(
+                    kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
+                ),
+            },
         )
 
         Notification.objects.create(
@@ -500,7 +510,16 @@ def approve_kyc(request, kyc_id):
 
         "APPROVE_KYC",
 
-        f"kyc_id={kyc.id}"
+        f"kyc_id={kyc.id}",
+        entity_type="KYC",
+        entity_id=kyc.id,
+        target_repr=kyc.utilisateur.email,
+        metadata={
+            "status": "APPROVED",
+            "user_id": kyc.utilisateur_id,
+            "reviewed_by": user.id,
+            "review_note": kyc.review_note or "",
+        },
     )
 
     Notification.objects.create(
@@ -578,7 +597,16 @@ def reject_kyc(request, kyc_id):
 
         "REJECT_KYC",
 
-        f"kyc_id={kyc.id}"
+        f"kyc_id={kyc.id}",
+        entity_type="KYC",
+        entity_id=kyc.id,
+        target_repr=kyc.utilisateur.email,
+        metadata={
+            "status": "REJECTED",
+            "user_id": kyc.utilisateur_id,
+            "reviewed_by": user.id,
+            "review_note": kyc.review_note or "",
+        },
     )
 
     Notification.objects.create(

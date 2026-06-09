@@ -157,6 +157,15 @@ def create_transaction(request):
             f"transaction_id={transaction.id};"
             f"type={transaction.type};amount={transaction.montant};status=PENDING"
         ),
+        entity_type="TRANSACTION",
+        entity_id=transaction.id,
+        target_repr=transaction.type,
+        metadata={
+            "status": "PENDING",
+            "amount": str(transaction.montant),
+            "sender_id": transaction.sender_id,
+            "receiver_id": transaction.receiver_id,
+        },
     )
 
     create_notification(
@@ -313,6 +322,17 @@ def approve_transaction(request, transaction_id):
             f"transaction_id={transaction.id};"
             f"type={transaction.type};amount={transaction.montant};status=APPROVED"
         ),
+        entity_type="TRANSACTION",
+        entity_id=transaction.id,
+        target_repr=transaction.type,
+        metadata={
+            "status": "APPROVED",
+            "amount": str(transaction.montant),
+            "sender_id": transaction.sender_id,
+            "receiver_id": transaction.receiver_id,
+            "validated_by": reviewer.id,
+            "validation_note": transaction.validation_note or "",
+        },
     )
 
     create_notification(
@@ -358,6 +378,17 @@ def reject_transaction(request, transaction_id):
             f"transaction_id={transaction.id};"
             f"type={transaction.type};amount={transaction.montant};status=REJECTED"
         ),
+        entity_type="TRANSACTION",
+        entity_id=transaction.id,
+        target_repr=transaction.type,
+        metadata={
+            "status": "REJECTED",
+            "amount": str(transaction.montant),
+            "sender_id": transaction.sender_id,
+            "receiver_id": transaction.receiver_id,
+            "validated_by": reviewer.id,
+            "validation_note": transaction.validation_note or "",
+        },
     )
 
     create_notification(
