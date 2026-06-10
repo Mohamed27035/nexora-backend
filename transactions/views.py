@@ -70,7 +70,7 @@ def _require_reviewer(user):
 def _require_verified_for_financial_action(user, transaction_type):
     if transaction_type in {"WITHDRAW", "TRANSFER"} and not user.is_verified:
         return _error(
-            "Votre compte doit être vérifié par KYC pour effectuer cette opération.",
+            "Votre compte doit etre verifie par KYC pour effectuer cette operation.",
             403,
         )
     return None
@@ -101,6 +101,42 @@ def _find_receiver(data):
     return None
 
 
+def _apply_transaction_effect(transaction):
+    sender = transaction.sender
+    receiver = transaction.receiver
+    amount = Decimal(str(transaction.montant)).quantize(Decimal("0.01"))
+
+    if transaction.type == "DEPOSIT":
+        sender.balance = float(Decimal(str(sender.balance)) + amount)
+        sender.save(update_fields=["balance"])
+        return
+
+    if transaction.type == "WITHDRAW":
+        current_balance = Decimal(str(sender.balance))
+        if current_balance < amount:
+            raise ValueError("Solde insuffisant")
+        sender.balance = float(current_balance - amount)
+        sender.save(update_fields=["balance"])
+        return
+
+    if transaction.type == "TRANSFER":
+        if not receiver:
+            raise ValueError("Destinataire manquant")
+
+        sender_balance = Decimal(str(sender.balance))
+        if sender_balance < amount:
+            raise ValueError("Solde insuffisant")
+
+        receiver_balance = Decimal(str(receiver.balance))
+        sender.balance = float(sender_balance - amount)
+        receiver.balance = float(receiver_balance + amount)
+        sender.save(update_fields=["balance"])
+        receiver.save(update_fields=["balance"])
+        return
+
+    raise ValueError("Type de transaction invalide")
+
+
 @api_view(["POST"])
 def create_transaction(request):
     user, error = get_current_user(request)
@@ -129,7 +165,7 @@ def create_transaction(request):
         if not receiver:
             return _error("Destinataire introuvable", 404)
         if receiver.id == user.id:
-            return _error("Impossible de transférer à soi-même", 400)
+            return _error("Impossible de transferer a soi-meme", 400)
         if Decimal(str(user.balance)) < amount:
             return _error("Solde insuffisant", 400)
         data["receiver"] = receiver.id
@@ -149,6 +185,77 @@ def create_transaction(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     transaction = serializer.save()
+
+    if transaction.type == "TRANSFER":
+        with db_transaction.atomic():
+            try:
+                _apply_transaction_effect(transaction)
+            except ValueError as exc:
+                transaction.delete()
+                return _error(str(exc), 400)
+
+            transaction.status = "APPROVED"
+            transaction.validation_note = "Auto-approved transfer"
+            transaction.save(
+                update_fields=["status", "validation_note", "updated_at"]
+            )
+
+        create_log(
+            user,
+            "CREATE_TRANSACTION",
+            (
+                f"transaction_id={transaction.id};"
+                f"type={transaction.type};amount={transaction.montant};status=APPROVED"
+            ),
+            entity_type="TRANSACTION",
+            entity_id=transaction.id,
+            target_repr=transaction.type,
+            metadata={
+                "status": "APPROVED",
+                "amount": str(transaction.montant),
+                "sender_id": transaction.sender_id,
+                "receiver_id": transaction.receiver_id,
+                "mode": "AUTO_TRANSFER",
+            },
+        )
+
+        create_log(
+            user,
+            "APPROVE_TRANSACTION",
+            (
+                f"transaction_id={transaction.id};"
+                f"type={transaction.type};amount={transaction.montant};status=APPROVED"
+            ),
+            entity_type="TRANSACTION",
+            entity_id=transaction.id,
+            target_repr=transaction.type,
+            metadata={
+                "status": "APPROVED",
+                "amount": str(transaction.montant),
+                "sender_id": transaction.sender_id,
+                "receiver_id": transaction.receiver_id,
+                "mode": "AUTO_TRANSFER",
+                "validation_note": transaction.validation_note or "",
+            },
+        )
+
+        create_notification(
+            user,
+            f"Votre transfert de {transaction.montant} MRU a ete execute avec succes.",
+        )
+        if transaction.receiver:
+            create_notification(
+                transaction.receiver,
+                f"Vous avez recu un transfert de {transaction.montant} MRU.",
+            )
+
+        return Response(
+            {
+                "message": "Transfert execute avec succes.",
+                "transaction": _serialize_transaction(transaction, request),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     create_log(
         user,
@@ -170,12 +277,12 @@ def create_transaction(request):
 
     create_notification(
         user,
-        f"Votre transaction {transaction.type} a été créée et attend une validation.",
+        f"Votre transaction {transaction.type} a ete creee et attend une validation.",
     )
 
     return Response(
         {
-            "message": "Transaction créée avec succès.",
+            "message": "Transaction creee avec succes.",
             "transaction": _serialize_transaction(transaction, request),
         },
         status=status.HTTP_201_CREATED,
@@ -248,42 +355,6 @@ def get_transactions(request):
     return Response(serializer.data)
 
 
-def _apply_transaction_effect(transaction):
-    sender = transaction.sender
-    receiver = transaction.receiver
-    amount = Decimal(str(transaction.montant)).quantize(Decimal("0.01"))
-
-    if transaction.type == "DEPOSIT":
-        sender.balance = float(Decimal(str(sender.balance)) + amount)
-        sender.save(update_fields=["balance"])
-        return
-
-    if transaction.type == "WITHDRAW":
-        current_balance = Decimal(str(sender.balance))
-        if current_balance < amount:
-            raise ValueError("Solde insuffisant")
-        sender.balance = float(current_balance - amount)
-        sender.save(update_fields=["balance"])
-        return
-
-    if transaction.type == "TRANSFER":
-        if not receiver:
-            raise ValueError("Destinataire manquant")
-
-        sender_balance = Decimal(str(sender.balance))
-        if sender_balance < amount:
-            raise ValueError("Solde insuffisant")
-
-        receiver_balance = Decimal(str(receiver.balance))
-        sender.balance = float(sender_balance - amount)
-        receiver.balance = float(receiver_balance + amount)
-        sender.save(update_fields=["balance"])
-        receiver.save(update_fields=["balance"])
-        return
-
-    raise ValueError("Type de transaction invalide")
-
-
 @api_view(["POST"])
 def approve_transaction(request, transaction_id):
     reviewer, error = get_current_user(request)
@@ -291,7 +362,7 @@ def approve_transaction(request, transaction_id):
         return error
 
     if not _require_reviewer(reviewer):
-        return _error("Permission refusée", 403)
+        return _error("Permission refusee", 403)
 
     transaction = Transaction.objects.select_related("sender", "receiver").filter(
         id=transaction_id
@@ -300,7 +371,7 @@ def approve_transaction(request, transaction_id):
         return _error("Transaction introuvable", 404)
 
     if transaction.status != "PENDING":
-        return _error("Cette transaction a déjà été traitée", 400)
+        return _error("Cette transaction a deja ete traitee", 400)
 
     with db_transaction.atomic():
         try:
@@ -337,12 +408,12 @@ def approve_transaction(request, transaction_id):
 
     create_notification(
         transaction.sender,
-        f"Votre transaction #{transaction.id} a été approuvée.",
+        f"Votre transaction #{transaction.id} a ete approuvee.",
     )
 
     return Response(
         {
-            "message": "Transaction approuvée.",
+            "message": "Transaction approuvee.",
             "transaction": _serialize_transaction(transaction, request),
         }
     )
@@ -355,14 +426,14 @@ def reject_transaction(request, transaction_id):
         return error
 
     if not _require_reviewer(reviewer):
-        return _error("Permission refusée", 403)
+        return _error("Permission refusee", 403)
 
     transaction = Transaction.objects.filter(id=transaction_id).first()
     if not transaction:
         return _error("Transaction introuvable", 404)
 
     if transaction.status != "PENDING":
-        return _error("Cette transaction a déjà été traitée", 400)
+        return _error("Cette transaction a deja ete traitee", 400)
 
     transaction.status = "REJECTED"
     transaction.validated_by = reviewer
@@ -393,12 +464,12 @@ def reject_transaction(request, transaction_id):
 
     create_notification(
         transaction.sender,
-        f"Votre transaction #{transaction.id} a été rejetée.",
+        f"Votre transaction #{transaction.id} a ete rejetee.",
     )
 
     return Response(
         {
-            "message": "Transaction rejetée.",
+            "message": "Transaction rejetee.",
             "transaction": _serialize_transaction(transaction, request),
         }
     )
