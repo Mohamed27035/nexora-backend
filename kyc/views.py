@@ -100,12 +100,6 @@ def _normalize_uploaded_image(instance, field_name, target_name):
 
 
 def _populate_ocr_fields(kyc, request_data=None):
-
-    from .ocr_utils import (
-        extract_text_from_image,
-        parse_mauritanian_id
-    )
-
     extracted_text = ""
     parsed_data = {
         "nni": "",
@@ -118,6 +112,10 @@ def _populate_ocr_fields(kyc, request_data=None):
     }
 
     try:
+        from .ocr_utils import (
+            extract_text_from_image,
+            parse_mauritanian_id
+        )
 
         if kyc.id_document:
 
@@ -201,7 +199,7 @@ def _populate_ocr_fields(kyc, request_data=None):
     )
 
 
-def _ensure_kyc_assets_ready(kyc):
+def _ensure_kyc_assets_ready(kyc, request_data=None):
 
     changed = False
 
@@ -223,10 +221,23 @@ def _ensure_kyc_assets_ready(kyc):
         bool(kyc.prenom),
         bool(kyc.nom_famille),
         bool(kyc.date_naissance),
+        bool((request_data or {}).get("nni")),
+        bool((request_data or {}).get("prenom")),
+        bool((request_data or {}).get("prenom_pere")),
+        bool((request_data or {}).get("nom_famille")),
+        bool((request_data or {}).get("sexe")),
+        bool((request_data or {}).get("date_naissance")),
+        bool((request_data or {}).get("lieu_naissance")),
     ])
 
     if not has_ocr_data:
-        _populate_ocr_fields(kyc)
+        try:
+            _populate_ocr_fields(kyc, request_data=request_data)
+        except Exception as e:
+            print(
+                "ENSURE KYC ASSETS OCR ERROR =>",
+                str(e)
+            )
 
     return changed
 
@@ -284,12 +295,19 @@ def submit_kyc(request):
 
         kyc = serializer.save()
         _ensure_kyc_assets_ready(
-            kyc
-        )
-        _populate_ocr_fields(
             kyc,
-            request.data
+            request_data=request.data
         )
+        try:
+            _populate_ocr_fields(
+                kyc,
+                request.data
+            )
+        except Exception as e:
+            print(
+                "SUBMIT KYC OCR ERROR =>",
+                str(e)
+            )
         create_log(
 
             user,
@@ -357,9 +375,15 @@ def get_my_kyc(request):
     )
 
     for item in kyc:
-        _ensure_kyc_assets_ready(
-            item
-        )
+        try:
+            _ensure_kyc_assets_ready(
+                item
+            )
+        except Exception as e:
+            print(
+                "GET MY KYC ASSET ERROR =>",
+                str(e)
+            )
 
     serializer = KYCRequestSerializer(
 
@@ -434,9 +458,15 @@ def get_all_kyc(request):
     kyc = kyc.order_by("-submitted_at")
 
     for item in kyc:
-        _ensure_kyc_assets_ready(
-            item
-        )
+        try:
+            _ensure_kyc_assets_ready(
+                item
+            )
+        except Exception as e:
+            print(
+                "GET ALL KYC ASSET ERROR =>",
+                str(e)
+            )
 
     serializer = KYCRequestSerializer(
 
