@@ -699,7 +699,7 @@ def detect_suspicious_behavior(request):
     for alert in alerts:
         Notification.objects.create(
             utilisateur=current_user,
-            title="Security Alert",
+            title="Alerte de sécurité",
             message=alert,
             type="danger",
         )

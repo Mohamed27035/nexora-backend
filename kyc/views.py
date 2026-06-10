@@ -313,7 +313,7 @@ def submit_kyc(request):
 
             utilisateur=user,
 
-            title="KYC Submitted",
+            title="KYC soumis",
 
             message=(
                 "Votre demande KYC est en attente"
@@ -325,7 +325,7 @@ def submit_kyc(request):
         return Response({
 
             "message":
-            "KYC submitted"
+            "KYC soumis"
 
         })
 
@@ -526,7 +526,7 @@ def approve_kyc(request, kyc_id):
 
         utilisateur=kyc.utilisateur,
 
-        title="KYC Approved",
+        title="KYC approuvé",
 
         message=(
             "Votre identité a été vérifiée"
@@ -538,7 +538,7 @@ def approve_kyc(request, kyc_id):
     return Response({
 
         "message":
-        "KYC approved"
+        "KYC approuvé"
 
     })
 
@@ -613,7 +613,7 @@ def reject_kyc(request, kyc_id):
 
         utilisateur=kyc.utilisateur,
 
-        title="KYC Rejected",
+        title="KYC rejeté",
 
         message=(
             "Votre demande KYC a été rejetée"
@@ -625,6 +625,6 @@ def reject_kyc(request, kyc_id):
     return Response({
 
         "message":
-        "KYC rejected"
+        "KYC rejeté"
 
     })
