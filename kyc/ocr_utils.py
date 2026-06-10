@@ -108,7 +108,7 @@ def _looks_like_name(value):
 
 
 def _looks_like_nni(value):
-    compact = re.sub(r"\D", "", _cleanup_value(value))
+    compact = re.sub(r"\D", "", _normalize_nni_candidate(value))
     return 8 <= len(compact) <= 14
 
 
@@ -124,6 +124,45 @@ def _looks_like_date(value):
 
 def _looks_like_sex(value):
     return _cleanup_value(value).upper() in {"M", "F"}
+
+
+def _normalize_nni_candidate(value):
+    cleaned = _cleanup_value(value).upper()
+    substitutions = {
+        "O": "0",
+        "Q": "0",
+        "D": "0",
+        "I": "1",
+        "L": "1",
+        "Z": "2",
+        "S": "5",
+        "B": "8",
+        "G": "9",
+    }
+    for source, target in substitutions.items():
+        cleaned = cleaned.replace(source, target)
+    return cleaned
+
+
+def _line_matches_field_hint(field_name, normalized_line):
+    hint_groups = {
+        "nni": [["ident"], ["nni", "nation", "num", "numero"]],
+        "prenom": [["prenom", "prnom", "given", "gen"], ["name", "nane", "ane"]],
+        "prenom_pere": [["pere", "prel", "father", "fath", "athe"], ["name", "nane", "ane"]],
+        "nom_famille": [["famille", "fanlle", "surname", "surnae", "sur"]],
+        "sexe": [["sex", "sexe", "sees"]],
+        "date_naissance": [["date"], ["birth", "naiss", "nance"]],
+        "lieu_naissance": [["place", "lieu"], ["birth", "naiss", "nance"]],
+    }
+
+    groups = hint_groups.get(field_name, [])
+    if not groups:
+        return False
+
+    for group in groups:
+        if not any(token in normalized_line for token in group):
+            return False
+    return True
 
 
 def _value_matches_field(field_name, value):
@@ -203,6 +242,12 @@ def _extract_field_value(field_name, lines, normalized_lines):
                     if _value_matches_field(field_name, merged):
                         return merged
 
+        if _line_matches_field_hint(field_name, normalized_line):
+            for next_index in range(index + 1, min(index + 4, len(lines))):
+                candidate = _cleanup_value(lines[next_index])
+                if _value_matches_field(field_name, candidate):
+                    return candidate
+
     return ""
 
 
@@ -241,6 +286,8 @@ def _fallback_search(text, field_name):
         match = re.search(pattern, compact, re.IGNORECASE)
         if match:
             value = _cleanup_value(match.group(1))
+            if field_name == "nni":
+                value = re.sub(r"\D", "", _normalize_nni_candidate(value))
             if _value_matches_field(field_name, value):
                 return value
 
@@ -318,7 +365,7 @@ def parse_mauritanian_id(text):
             if not data["nni"] and "identification" in normalized_line:
                 for candidate in lines[index:index + 3]:
                     if _looks_like_nni(candidate):
-                        data["nni"] = re.sub(r"\D", "", candidate)
+                        data["nni"] = re.sub(r"\D", "", _normalize_nni_candidate(candidate))
                         break
 
             if not data["prenom"] and ("given name" in normalized_line or normalized_line == "prenom"):
@@ -379,7 +426,7 @@ def parse_mauritanian_id(text):
                     break
 
         if data["nni"]:
-            data["nni"] = re.sub(r"\D", "", data["nni"])
+            data["nni"] = re.sub(r"\D", "", _normalize_nni_candidate(data["nni"]))
 
         if data["sexe"]:
             data["sexe"] = data["sexe"].upper()
