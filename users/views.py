@@ -112,6 +112,8 @@ def _get_account_status(user):
         return "SUSPENDED"
     if getattr(user, "is_verified", False):
         return "VERIFIED"
+    if is_client(user):
+        return "INACTIVE"
     return "ACTIVE"
 
 
@@ -136,6 +138,11 @@ def serialize_user(user, request=None):
         "is_suspended": user.is_suspended,
         "is_banned": user.is_banned,
         "status": _get_account_status(user),
+        "can_use_services": (
+            not user.is_banned
+            and not user.is_suspended
+            and (not is_client(user) or user.is_verified)
+        ),
         "last_login": user.last_login,
         "last_logout": user.last_logout,
         "last_ip": user.last_ip,
@@ -833,6 +840,12 @@ def change_role(request, id):
     role = normalize_role(request.data.get("role"))
     if role not in _get_manageable_roles():
         return _error("Rôle invalide.", 400)
+
+    if is_client(user) and not user.is_verified and role != "CLIENT":
+        return _error(
+            "Impossible de changer le rôle d'un client non vérifié.",
+            400,
+        )
 
     previous_role = user.role
     user.role = role

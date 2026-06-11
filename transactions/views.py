@@ -68,9 +68,9 @@ def _require_reviewer(user):
 
 
 def _require_verified_for_financial_action(user, transaction_type):
-    if transaction_type in {"WITHDRAW", "TRANSFER"} and not user.is_verified:
+    if has_role(user, "CLIENT") and not user.is_verified:
         return _error(
-            "Votre compte doit etre verifie par KYC pour effectuer cette operation.",
+            "Votre compte doit être vérifié par KYC avant d'utiliser les services financiers.",
             403,
         )
     return None
