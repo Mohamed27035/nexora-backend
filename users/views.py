@@ -776,9 +776,31 @@ def activate_user(request, id):
     if error:
         return error
 
+    update_fields = ["is_suspended", "is_banned"]
     user.is_suspended = False
     user.is_banned = False
-    user.save(update_fields=["is_suspended", "is_banned"])
+
+    if is_client(user) and not user.is_verified:
+        try:
+            from kyc.models import KYCRequest
+
+            has_approved_kyc = KYCRequest.objects.filter(
+                utilisateur=user,
+                status="APPROVED",
+            ).exists()
+        except Exception:
+            has_approved_kyc = False
+
+        if not has_approved_kyc:
+            return _error(
+                "Impossible d'activer ce client sans KYC approuvé. Approuvez d'abord sa demande KYC.",
+                400,
+            )
+
+        user.is_verified = True
+        update_fields.append("is_verified")
+
+    user.save(update_fields=update_fields)
 
     _notify_user(user, "Compte activé", "Votre compte a été réactivé.", "success")
     create_log(

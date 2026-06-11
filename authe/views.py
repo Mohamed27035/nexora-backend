@@ -128,6 +128,10 @@ def logine(request):
 
         }, status=400)
 
+    if user.role == "ADMIN" and not user.is_verified:
+        user.is_verified = True
+        user.save(update_fields=["is_verified"])
+
     # JWT
     refresh = RefreshToken.for_user(
         user
@@ -228,7 +232,10 @@ def register_admin(request):
                 )
             ),
 
-            role="ADMIN"
+            role="ADMIN",
+            is_verified=True,
+            is_suspended=False,
+            is_banned=False,
         )
 
         return Response({
