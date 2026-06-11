@@ -17,6 +17,15 @@ import random
 OTP_EXPIRY_MINUTES = 10
 
 
+def _normalize_phone(value):
+    return "".join(ch for ch in str(value or "").strip() if ch.isdigit())
+
+
+def _is_valid_mauritanian_phone(value):
+    phone = _normalize_phone(value)
+    return len(phone) == 8 and phone[0] in {"2", "3", "4"}
+
+
 def _generate_otp():
 
     return str(
@@ -194,6 +203,21 @@ def register_admin(request):
             "email",
             ""
         ).strip().lower()
+        telephone = _normalize_phone(
+            request.data.get(
+                "telephone",
+                ""
+            )
+        )
+
+        if not _is_valid_mauritanian_phone(telephone):
+
+            return Response({
+
+                "error":
+                "Numéro de téléphone invalide. Il doit contenir 8 chiffres et commencer par 2, 3 ou 4."
+
+            }, status=400)
 
         if Utilisateur.objects.filter(
             email=email
@@ -203,6 +227,37 @@ def register_admin(request):
 
                 "error":
                 "Email already exists"
+
+            }, status=400)
+
+        if not _is_valid_mauritanian_phone(telephone):
+
+            return Response({
+
+                "error":
+                "Numéro de téléphone invalide. Il doit contenir 8 chiffres et commencer par 2, 3 ou 4."
+
+            }, status=400)
+
+        if Utilisateur.objects.filter(
+            telephone=telephone
+        ).exists():
+
+            return Response({
+
+                "error":
+                "Ce numéro de téléphone est déjà utilisé."
+
+            }, status=400)
+
+        if Utilisateur.objects.filter(
+            telephone=telephone
+        ).exists():
+
+            return Response({
+
+                "error":
+                "Ce numéro de téléphone est déjà utilisé."
 
             }, status=400)
 
@@ -216,9 +271,7 @@ def register_admin(request):
                 "prenom"
             ),
 
-            telephone=request.data.get(
-                "telephone"
-            ),
+            telephone=telephone,
 
             bio=request.data.get(
                 "bio"
@@ -278,6 +331,12 @@ def register(request):
             "email",
             ""
         ).strip().lower()
+        telephone = _normalize_phone(
+            request.data.get(
+                "telephone",
+                ""
+            )
+        )
 
         # ==========================
         # EMAIL EXISTS
@@ -290,6 +349,26 @@ def register(request):
 
                 "error":
                 "Email already exists"
+
+            }, status=400)
+
+        if not _is_valid_mauritanian_phone(telephone):
+
+            return Response({
+
+                "error":
+                "Numéro de téléphone invalide. Il doit contenir 8 chiffres et commencer par 2, 3 ou 4."
+
+            }, status=400)
+
+        if Utilisateur.objects.filter(
+            telephone=telephone
+        ).exists():
+
+            return Response({
+
+                "error":
+                "Ce numéro de téléphone est déjà utilisé."
 
             }, status=400)
 
@@ -306,9 +385,7 @@ def register(request):
                 "prenom"
             ),
 
-            telephone=request.data.get(
-                "telephone"
-            ),
+            telephone=telephone,
 
             bio=request.data.get(
                 "bio"

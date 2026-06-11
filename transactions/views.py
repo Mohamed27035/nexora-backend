@@ -91,9 +91,18 @@ def _parse_amount(raw_amount):
 def _find_receiver(data):
     receiver_id = data.get("receiver")
     receiver_email = str(data.get("receiver_email", "")).strip().lower()
+    receiver_phone = "".join(
+        ch for ch in str(data.get("receiver_phone", "")).strip() if ch.isdigit()
+    )
 
     if receiver_id:
         return Utilisateur.objects.filter(id=receiver_id).first()
+
+    if receiver_phone:
+        matches = Utilisateur.objects.filter(telephone=receiver_phone)
+        if matches.count() == 1:
+            return matches.first()
+        return None
 
     if receiver_email:
         return Utilisateur.objects.filter(email=receiver_email).first()
@@ -163,7 +172,7 @@ def create_transaction(request):
     if transaction_type == "TRANSFER":
         receiver = _find_receiver(data)
         if not receiver:
-            return _error("Destinataire introuvable", 404)
+            return _error("Destinataire introuvable avec ce numéro de téléphone", 404)
         if receiver.id == user.id:
             return _error("Impossible de transferer a soi-meme", 400)
         if Decimal(str(user.balance)) < amount:
@@ -173,6 +182,7 @@ def create_transaction(request):
         data.pop("receiver", None)
 
     data.pop("receiver_email", None)
+    data.pop("receiver_phone", None)
 
     if transaction_type == "WITHDRAW" and Decimal(str(user.balance)) < amount:
         return _error("Solde insuffisant", 400)

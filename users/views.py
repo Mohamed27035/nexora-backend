@@ -79,6 +79,15 @@ def is_client(user):
     return has_role(user, "CLIENT")
 
 
+def normalize_phone(value):
+    return "".join(ch for ch in str(value or "").strip() if ch.isdigit())
+
+
+def is_valid_mauritanian_phone(value):
+    phone = normalize_phone(value)
+    return len(phone) == 8 and phone[0] in {"2", "3", "4"}
+
+
 def _error(message, status=400):
     return Response({"error": message}, status=status)
 
@@ -586,6 +595,18 @@ def update_my_profile(request):
     if "email" in data:
         data["email"] = str(data["email"]).strip().lower()
 
+    if "telephone" in data:
+        data["telephone"] = normalize_phone(data["telephone"])
+        if data["telephone"] and not is_valid_mauritanian_phone(data["telephone"]):
+            return _error(
+                "Numéro de téléphone invalide. Il doit contenir 8 chiffres et commencer par 2, 3 ou 4.",
+                400,
+            )
+        if data["telephone"] and Utilisateur.objects.exclude(id=current_user.id).filter(
+            telephone=data["telephone"]
+        ).exists():
+            return _error("Ce numéro de téléphone est déjà utilisé.", 400)
+
     if data.get("password"):
         data["password"] = make_password(data["password"])
     else:
@@ -1000,17 +1021,27 @@ def register_client(request):
         email = str(request.data.get("email", "")).strip().lower()
         password = request.data.get("password")
         nom = str(request.data.get("nom", "")).strip()
+        telephone = normalize_phone(request.data.get("telephone", ""))
 
         if not nom or not email or not password:
             return _error("Les champs nom, email et mot de passe sont obligatoires.", 400)
 
+        if not is_valid_mauritanian_phone(telephone):
+            return _error(
+                "Numéro de téléphone invalide. Il doit contenir 8 chiffres et commencer par 2, 3 ou 4.",
+                400,
+            )
+
         if Utilisateur.objects.filter(email=email).exists():
             return _error("Cet email est déjà utilisé.", 400)
+
+        if Utilisateur.objects.filter(telephone=telephone).exists():
+            return _error("Ce numéro de téléphone est déjà utilisé.", 400)
 
         user = Utilisateur.objects.create(
             nom=nom,
             prenom=str(request.data.get("prenom", "")).strip(),
-            telephone=str(request.data.get("telephone", "")).strip(),
+            telephone=telephone,
             bio="",
             email=email,
             password=make_password(password),
