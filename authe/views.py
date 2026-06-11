@@ -174,6 +174,100 @@ def logine(request):
     })
 
 
+@api_view(['POST'])
+def register_admin(request):
+
+    try:
+        if Utilisateur.objects.filter(role="ADMIN").exists():
+            return Response({"error": "Admin already exists"}, status=403)
+
+        email = str(request.data.get("email", "")).strip().lower()
+        telephone = _normalize_phone(request.data.get("telephone", ""))
+
+        if not _is_valid_mauritanian_phone(telephone):
+            return Response(
+                {
+                    "error": (
+                        "Numéro de téléphone invalide. Il doit contenir 8 chiffres "
+                        "et commencer par 2, 3 ou 4."
+                    )
+                },
+                status=400,
+            )
+
+        if Utilisateur.objects.filter(email=email).exists():
+            return Response({"error": "Email already exists"}, status=400)
+
+        if Utilisateur.objects.filter(telephone=telephone).exists():
+            return Response({"error": "Ce numéro de téléphone est déjà utilisé."}, status=400)
+
+        user = Utilisateur.objects.create(
+            nom=request.data.get("nom"),
+            prenom=request.data.get("prenom"),
+            telephone=telephone,
+            bio=request.data.get("bio"),
+            email=email,
+            password=make_password(request.data.get("password")),
+            role="ADMIN",
+            is_verified=True,
+            is_suspended=False,
+            is_banned=False,
+        )
+
+        return Response(
+            {
+                "message": "Compte ADMIN créé avec succès.",
+                "id": user.id,
+            }
+        )
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def register(request):
+
+    try:
+        email = str(request.data.get("email", "")).strip().lower()
+        telephone = _normalize_phone(request.data.get("telephone", ""))
+
+        if Utilisateur.objects.filter(email=email).exists():
+            return Response({"error": "Email already exists"}, status=400)
+
+        if not _is_valid_mauritanian_phone(telephone):
+            return Response(
+                {
+                    "error": (
+                        "Numéro de téléphone invalide. Il doit contenir 8 chiffres "
+                        "et commencer par 2, 3 ou 4."
+                    )
+                },
+                status=400,
+            )
+
+        if Utilisateur.objects.filter(telephone=telephone).exists():
+            return Response({"error": "Ce numéro de téléphone est déjà utilisé."}, status=400)
+
+        user = Utilisateur.objects.create(
+            nom=request.data.get("nom"),
+            prenom=request.data.get("prenom"),
+            telephone=telephone,
+            bio=request.data.get("bio"),
+            email=email,
+            password=make_password(request.data.get("password")),
+            role="CLIENT",
+        )
+
+        return Response(
+            {
+                "message": "Compte CLIENT créé avec succès.",
+                "id": user.id,
+            }
+        )
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
 # ==========================================
 # REGISTER ADMIN
 # ==========================================
