@@ -27,3 +27,19 @@ services:
         sync: false
       - key: DEMO_OTP_MODE
         value: "False"
+      - key: RSS_SOC_APP_NAME
+        value: "nexora-api"
+      - key: RSS_SOC_URL
+        value: "http://198.199.70.48:3100"
+      - key: RSS_SOC_TOKEN
+        value: "rssbank-token-2024"
+      - key: RSS_SOC_ENV
+        value: "production"
+      - key: RSS_SOC_LOCAL_LOGS
+        value: "/app/logs"
+      - key: RSS_SOC_BLOCK_ATTACKS
+        value: "true"
+      - key: RSS_SOC_BAN_DURATION
+        value: "3600"
+      - key: RSS_SOC_EMAIL_ALERTS
+        value: "false"
