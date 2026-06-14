@@ -10,12 +10,15 @@ from django.utils import timezone
 from rest_framework_simplejwt.tokens import (AccessToken)
 
 from datetime import timedelta
+from urllib.parse import urlencode
 
 from users.models import Utilisateur
 
+import requests
 import random
 
 OTP_EXPIRY_MINUTES = 10
+NOVA_SSO_SCOPE = "openid profile email phone"
 
 
 def _normalize_phone(value):
@@ -76,6 +79,222 @@ def _clear_user_otp(user):
             "otp_code",
             "otp_created_at",
         ]
+    )
+
+
+def _nova_sso_is_configured():
+
+    return all(
+        [
+            getattr(settings, "NOVA_SSO_ENABLED", False),
+            getattr(settings, "NOVA_SSO_CLIENT_ID", ""),
+            getattr(settings, "NOVA_SSO_CLIENT_SECRET", ""),
+            getattr(settings, "NOVA_SSO_AUTHORIZE_URL", ""),
+            getattr(settings, "NOVA_SSO_TOKEN_URL", ""),
+            getattr(settings, "NOVA_SSO_USERINFO_URL", ""),
+            getattr(settings, "NOVA_SSO_REDIRECT_URI", ""),
+        ]
+    )
+
+
+def _nova_required_config_flags():
+
+    return {
+        "enabled": bool(getattr(settings, "NOVA_SSO_ENABLED", False)),
+        "client_id": bool(getattr(settings, "NOVA_SSO_CLIENT_ID", "")),
+        "client_secret": bool(getattr(settings, "NOVA_SSO_CLIENT_SECRET", "")),
+        "authorize_url": bool(getattr(settings, "NOVA_SSO_AUTHORIZE_URL", "")),
+        "token_url": bool(getattr(settings, "NOVA_SSO_TOKEN_URL", "")),
+        "userinfo_url": bool(getattr(settings, "NOVA_SSO_USERINFO_URL", "")),
+        "redirect_uri": bool(getattr(settings, "NOVA_SSO_REDIRECT_URI", "")),
+    }
+
+
+def _build_nova_authorization_url():
+
+    state = get_random_string(32)
+    query = urlencode(
+        {
+            "client_id": settings.NOVA_SSO_CLIENT_ID,
+            "redirect_uri": settings.NOVA_SSO_REDIRECT_URI,
+            "response_type": "code",
+            "scope": NOVA_SSO_SCOPE,
+            "state": state,
+        }
+    )
+
+    return f"{settings.NOVA_SSO_AUTHORIZE_URL}?{query}", state
+
+
+def _request_nova_token(code):
+
+    response = requests.post(
+        settings.NOVA_SSO_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "client_id": settings.NOVA_SSO_CLIENT_ID,
+            "client_secret": settings.NOVA_SSO_CLIENT_SECRET,
+            "redirect_uri": settings.NOVA_SSO_REDIRECT_URI,
+            "code": code,
+        },
+        headers={
+            "Accept": "application/json",
+        },
+        timeout=20,
+    )
+
+    if response.status_code >= 400:
+        raise ValueError(
+            f"Echec de l'echange du code OAuth ({response.status_code}): {response.text[:300]}"
+        )
+
+    payload = response.json()
+    access_token = payload.get("access_token", "")
+
+    if not access_token:
+        raise ValueError("Aucun access_token recu depuis Nova SSO.")
+
+    return payload
+
+
+def _request_nova_userinfo(access_token):
+
+    response = requests.get(
+        settings.NOVA_SSO_USERINFO_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+        timeout=20,
+    )
+
+    if response.status_code >= 400:
+        raise ValueError(
+            f"Echec de recuperation du profil Nova ({response.status_code}): {response.text[:300]}"
+        )
+
+    payload = response.json()
+
+    if not isinstance(payload, dict):
+        raise ValueError("Le profil Nova recu est invalide.")
+
+    return payload
+
+
+def _split_display_name(full_name):
+
+    parts = [part for part in str(full_name or "").strip().split() if part]
+
+    if not parts:
+        return "", ""
+
+    if len(parts) == 1:
+        return parts[0], ""
+
+    return parts[0], " ".join(parts[1:])
+
+
+def _sync_nova_user(profile):
+
+    email = (
+        str(profile.get("email") or profile.get("preferred_username") or "")
+        .strip()
+        .lower()
+    )
+
+    if not email or "@" not in email:
+        raise ValueError("Nova SSO n'a pas renvoye une adresse email exploitable.")
+
+    given_name = str(
+        profile.get("given_name")
+        or profile.get("first_name")
+        or profile.get("prenom")
+        or ""
+    ).strip()
+
+    family_name = str(
+        profile.get("family_name")
+        or profile.get("last_name")
+        or profile.get("nom")
+        or ""
+    ).strip()
+
+    if not given_name and not family_name:
+        given_name, family_name = _split_display_name(
+            profile.get("name") or profile.get("display_name") or ""
+        )
+
+    phone = _normalize_phone(
+        profile.get("phone_number")
+        or profile.get("telephone")
+        or profile.get("phone")
+        or ""
+    )
+
+    user = Utilisateur.objects.filter(email__iexact=email).first()
+
+    if user is None:
+        user = Utilisateur.objects.create(
+            nom=family_name or given_name or "Utilisateur",
+            prenom=given_name or "",
+            email=email,
+            telephone=phone or None,
+            password=make_password(get_random_string(32)),
+            role="CLIENT",
+            is_verified=False,
+            is_suspended=False,
+            is_banned=False,
+        )
+        return user
+
+    updated_fields = []
+
+    if given_name and not (user.prenom or "").strip():
+        user.prenom = given_name
+        updated_fields.append("prenom")
+
+    if family_name and not (user.nom or "").strip():
+        user.nom = family_name
+        updated_fields.append("nom")
+
+    if phone and not _normalize_phone(user.telephone):
+        user.telephone = phone
+        updated_fields.append("telephone")
+
+    if updated_fields:
+        user.save(update_fields=updated_fields)
+
+    return user
+
+
+def _build_auth_response(user):
+
+    if user.is_banned:
+        return Response({"error": "Compte banni"}, status=403)
+
+    if user.is_suspended:
+        return Response({"error": "Compte suspendu"}, status=403)
+
+    if user.role == "ADMIN" and not user.is_verified:
+        user.is_verified = True
+        user.save(update_fields=["is_verified"])
+
+    refresh = RefreshToken.for_user(user)
+
+    return Response(
+        {
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "nom": user.nom,
+                "prenom": user.prenom,
+                "email": user.email,
+                "role": user.role,
+                "is_verified": user.is_verified,
+            },
+            "provider": "nova_sso",
+        }
     )
 
 
@@ -933,36 +1152,67 @@ def verify_welcome_otp(request):
 # SSO NOVA (PREPARED PLACEHOLDER)
 # ==========================================
 
-@api_view(['POST'])
+@api_view(['GET', 'POST'])
 def sso_nova(request):
 
-    if not getattr(settings, "NOVA_SSO_ENABLED", False):
+    if not _nova_sso_is_configured():
 
         return Response({
 
             "error":
             "Nova SSO non configure pour le moment",
 
-            "details":
-            "Ajoutez les parametres NOVA_SSO_* pour activer l'integration entreprise."
+            "required_config":
+            _nova_required_config_flags()
 
         }, status=501)
 
-    return Response({
+    if request.method == "GET":
 
-        "error":
-        "Nova SSO pret cote backend, mais le flux OAuth/OIDC final de l'entreprise n'est pas encore branche.",
+        authorization_url, state = _build_nova_authorization_url()
 
-        "required_config": {
-            "client_id": bool(getattr(settings, "NOVA_SSO_CLIENT_ID", "")),
-            "client_secret": bool(getattr(settings, "NOVA_SSO_CLIENT_SECRET", "")),
-            "authorize_url": bool(getattr(settings, "NOVA_SSO_AUTHORIZE_URL", "")),
-            "token_url": bool(getattr(settings, "NOVA_SSO_TOKEN_URL", "")),
-            "userinfo_url": bool(getattr(settings, "NOVA_SSO_USERINFO_URL", "")),
-            "redirect_uri": bool(getattr(settings, "NOVA_SSO_REDIRECT_URI", "")),
-        }
+        return Response(
+            {
+                "authorization_url": authorization_url,
+                "redirect_uri": settings.NOVA_SSO_REDIRECT_URI,
+                "state": state,
+                "provider": "nova_sso",
+            }
+        )
 
-    }, status=501)
+    code = str(request.data.get("code", "")).strip()
+
+    if not code:
+        return Response(
+            {
+                "error": "Code d'autorisation manquant."
+            },
+            status=400,
+        )
+
+    try:
+        token_payload = _request_nova_token(code)
+        profile = _request_nova_userinfo(token_payload.get("access_token", ""))
+        user = _sync_nova_user(profile)
+        return _build_auth_response(user)
+    except ValueError as error:
+        return Response({"error": str(error)}, status=400)
+    except requests.RequestException as error:
+        return Response(
+            {
+                "error": "Impossible de joindre Nova SSO.",
+                "details": str(error),
+            },
+            status=503,
+        )
+    except Exception as error:
+        return Response(
+            {
+                "error": "Echec de connexion Nova SSO.",
+                "details": str(error),
+            },
+            status=500,
+        )
 
 
 @api_view(['GET'])
