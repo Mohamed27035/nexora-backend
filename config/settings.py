@@ -31,13 +31,21 @@ def env_flag(name, default="False"):
     )
 
 
+def env_text(name, default=""):
+
+    return os.environ.get(
+        name,
+        default
+    ).strip()
+
+
 NOVA_SSO_ENABLED = env_flag("NOVA_SSO_ENABLED")
-NOVA_SSO_CLIENT_ID = os.environ.get("NOVA_SSO_CLIENT_ID", "")
-NOVA_SSO_CLIENT_SECRET = os.environ.get("NOVA_SSO_CLIENT_SECRET", "")
-NOVA_SSO_AUTHORIZE_URL = os.environ.get("NOVA_SSO_AUTHORIZE_URL", "")
-NOVA_SSO_TOKEN_URL = os.environ.get("NOVA_SSO_TOKEN_URL", "")
-NOVA_SSO_USERINFO_URL = os.environ.get("NOVA_SSO_USERINFO_URL", "")
-NOVA_SSO_REDIRECT_URI = os.environ.get("NOVA_SSO_REDIRECT_URI", "")
+NOVA_SSO_CLIENT_ID = env_text("NOVA_SSO_CLIENT_ID")
+NOVA_SSO_CLIENT_SECRET = env_text("NOVA_SSO_CLIENT_SECRET")
+NOVA_SSO_AUTHORIZE_URL = env_text("NOVA_SSO_AUTHORIZE_URL")
+NOVA_SSO_TOKEN_URL = env_text("NOVA_SSO_TOKEN_URL")
+NOVA_SSO_USERINFO_URL = env_text("NOVA_SSO_USERINFO_URL")
+NOVA_SSO_REDIRECT_URI = env_text("NOVA_SSO_REDIRECT_URI")
 
 
 DEMO_OTP_MODE = env_flag(
