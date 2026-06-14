@@ -5,6 +5,14 @@ from users.models import Utilisateur
 
 class KYCRequest(models.Model):
 
+    BIOMETRIC_STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("VERIFIED", "Verified"),
+        ("FAILED", "Failed"),
+        ("ERROR", "Error"),
+        ("SKIPPED", "Skipped"),
+    ]
+
     # ==========================
     # STATUS
     # ==========================
@@ -141,6 +149,45 @@ class KYCRequest(models.Model):
     lieu_naissance = models.CharField(
 
         max_length=255,
+
+        blank=True,
+
+        null=True
+    )
+
+    biometric_status = models.CharField(
+
+        max_length=20,
+
+        choices=BIOMETRIC_STATUS_CHOICES,
+
+        default="PENDING"
+    )
+
+    biometric_score = models.FloatField(
+
+        blank=True,
+
+        null=True
+    )
+
+    biometric_message = models.TextField(
+
+        blank=True,
+
+        null=True
+    )
+
+    biometric_reference = models.CharField(
+
+        max_length=255,
+
+        blank=True,
+
+        null=True
+    )
+
+    biometric_raw = models.JSONField(
 
         blank=True,
 

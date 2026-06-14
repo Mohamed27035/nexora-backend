@@ -34,6 +34,76 @@ def _notify_admins_about_kyc(kyc, message):
         print("ADMIN KYC NOTIFICATION ERROR =>", str(e))
 
 
+def _run_biometric_verification(kyc):
+
+    if not kyc.id_document or not kyc.selfie:
+        kyc.biometric_status = "SKIPPED"
+        kyc.biometric_score = None
+        kyc.biometric_message = (
+            "Image de carte ou selfie manquant pour la verification biométrique."
+        )
+        kyc.biometric_reference = ""
+        kyc.biometric_raw = None
+        kyc.save(
+            update_fields=[
+                "biometric_status",
+                "biometric_score",
+                "biometric_message",
+                "biometric_reference",
+                "biometric_raw",
+            ]
+        )
+        return
+
+    try:
+        from .biometric_utils import (
+            biometric_is_configured,
+            perform_selfie_verification,
+        )
+
+        if not biometric_is_configured():
+            kyc.biometric_status = "SKIPPED"
+            kyc.biometric_score = None
+            kyc.biometric_message = (
+                "Service biométrique non configuré."
+            )
+            kyc.biometric_reference = ""
+            kyc.biometric_raw = None
+        else:
+            result = perform_selfie_verification(
+                user_id=kyc.utilisateur_id,
+                id_document_path=kyc.id_document.path,
+                selfie_path=kyc.selfie.path,
+                device_id="nexora-kyc",
+            )
+
+            kyc.biometric_status = result.get("status", "ERROR")
+            kyc.biometric_score = result.get("score")
+            kyc.biometric_message = result.get("message", "")
+            kyc.biometric_reference = result.get("reference", "")
+            kyc.biometric_raw = result.get("raw_payload")
+
+    except Exception as e:
+        print("BIOMETRIC VERIFY ERROR =>", str(e))
+        kyc.biometric_status = "ERROR"
+        kyc.biometric_score = None
+        kyc.biometric_message = str(e)
+        kyc.biometric_reference = ""
+        kyc.biometric_raw = {
+            "error": str(e),
+        }
+
+    kyc.save(
+        update_fields=[
+            "biometric_status",
+            "biometric_score",
+            "biometric_message",
+            "biometric_reference",
+            "biometric_raw",
+        ]
+    )
+
+
 def _normalize_uploaded_image(instance, field_name, target_name):
 
     image_field = getattr(
@@ -458,6 +528,16 @@ def submit_kyc(request):
             str(e)
         )
 
+    try:
+        _run_biometric_verification(
+            kyc
+        )
+    except Exception as e:
+        print(
+            "SUBMIT KYC BIOMETRIC ERROR =>",
+            str(e)
+        )
+
     create_log(
 
         user,
@@ -475,6 +555,8 @@ def submit_kyc(request):
             "ocr_complete": bool(
                 kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
             ),
+            "biometric_status": kyc.biometric_status,
+            "biometric_score": kyc.biometric_score,
         },
     )
 

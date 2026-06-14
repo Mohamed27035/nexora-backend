@@ -44,6 +44,11 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "sexe",
             "date_naissance",
             "lieu_naissance",
+            "biometric_status",
+            "biometric_score",
+            "biometric_message",
+            "biometric_reference",
+            "biometric_raw",
             "ocr_complete",
         ]
         read_only_fields = [
@@ -58,6 +63,11 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "sexe",
             "date_naissance",
             "lieu_naissance",
+            "biometric_status",
+            "biometric_score",
+            "biometric_message",
+            "biometric_reference",
+            "biometric_raw",
             "id_document_url",
             "selfie_url",
             "ocr_complete",

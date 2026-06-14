@@ -33,6 +33,12 @@ services:
         sync: false
       - key: NOVA_OCR_TIMEOUT
         value: "45"
+      - key: NOVA_BIOMETRIC_BASE_URL
+        value: "http://51.20.136.48:8000"
+      - key: NOVA_BIOMETRIC_API_KEY
+        sync: false
+      - key: NOVA_BIOMETRIC_TIMEOUT
+        value: "45"
       - key: RSS_SOC_APP_NAME
         value: "nexora-api"
       - key: RSS_SOC_URL
