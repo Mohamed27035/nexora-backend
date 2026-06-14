@@ -1,7 +1,11 @@
+import json
 import re
 import unicodedata
+from pathlib import Path
 
 import pytesseract
+import requests
+from django.conf import settings
 
 
 FIELD_ALIASES = {
@@ -51,6 +55,55 @@ FIELD_ALIASES = {
     ],
 }
 
+EXTERNAL_FIELD_CANDIDATES = {
+    "nni": [
+        "nni",
+        "numero_national_identification",
+        "numero_national_didentification",
+        "national_id",
+        "id_number",
+    ],
+    "prenom": [
+        "prenom",
+        "first_name",
+        "given_name",
+        "givenName",
+    ],
+    "prenom_pere": [
+        "prenom_pere",
+        "father_name",
+        "father_given_name",
+    ],
+    "nom_famille": [
+        "nom_famille",
+        "last_name",
+        "surname",
+        "family_name",
+    ],
+    "sexe": [
+        "sexe",
+        "sex",
+        "gender",
+    ],
+    "date_naissance": [
+        "date_naissance",
+        "birth_date",
+        "date_of_birth",
+    ],
+    "lieu_naissance": [
+        "lieu_naissance",
+        "birth_place",
+        "place_of_birth",
+    ],
+    "ocr_text": [
+        "ocr_text",
+        "text",
+        "raw_text",
+        "full_text",
+        "extracted_text",
+    ],
+}
+
 
 def _strip_accents(value):
     normalized = unicodedata.normalize("NFKD", value)
@@ -88,6 +141,131 @@ def _cleanup_value(value):
     text = text.replace("ﬁ", "fi").replace("ﬂ", "fl")
     text = re.sub(r"\s+", " ", text).strip(" :-\t")
     return text.strip()
+
+
+def _external_ocr_is_configured():
+    return bool(
+        getattr(settings, "NOVA_OCR_BASE_URL", "").strip()
+        and getattr(settings, "NOVA_OCR_API_KEY", "").strip()
+    )
+
+
+def _walk_payload(payload):
+    if isinstance(payload, dict):
+        yield payload
+        for value in payload.values():
+            yield from _walk_payload(value)
+    elif isinstance(payload, list):
+        for item in payload:
+            yield from _walk_payload(item)
+
+
+def _extract_from_payload(payload, keys):
+    normalized_keys = {str(key).lower() for key in keys}
+
+    for node in _walk_payload(payload):
+        if not isinstance(node, dict):
+            continue
+        for key, value in node.items():
+            if str(key).lower() in normalized_keys and value not in [None, ""]:
+                if isinstance(value, (dict, list)):
+                    continue
+                return _cleanup_value(value)
+    return ""
+
+
+def _coerce_external_payload(raw_payload):
+    if isinstance(raw_payload, dict):
+        return raw_payload
+
+    if isinstance(raw_payload, str):
+        stripped = raw_payload.strip()
+        if not stripped:
+            return {"ocr_text": ""}
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                return parsed
+            return {"ocr_text": stripped, "payload": parsed}
+        except Exception:
+            return {"ocr_text": stripped}
+
+    return {"payload": raw_payload}
+
+
+def call_external_ocr_api(image_path):
+    if not _external_ocr_is_configured():
+        raise RuntimeError("External OCR API not configured.")
+
+    endpoint = f"{settings.NOVA_OCR_BASE_URL.rstrip('/')}/api/ocr"
+
+    with open(image_path, "rb") as image_file:
+        response = requests.post(
+            endpoint,
+            headers={
+                "Accept": "application/json",
+                "Secure-Nova-Key": settings.NOVA_OCR_API_KEY,
+            },
+            files={
+                "id_card": (
+                    Path(image_path).name,
+                    image_file,
+                    "image/jpeg",
+                )
+            },
+            timeout=getattr(settings, "NOVA_OCR_TIMEOUT", 45),
+        )
+
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"External OCR API error ({response.status_code}): {response.text[:500]}"
+        )
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = response.text
+
+    return _coerce_external_payload(payload)
+
+
+def parse_external_ocr_payload(payload):
+    source = _coerce_external_payload(payload)
+    data = {
+        "nni": "",
+        "prenom": "",
+        "prenom_pere": "",
+        "nom_famille": "",
+        "sexe": "",
+        "date_naissance": "",
+        "lieu_naissance": "",
+    }
+
+    raw_text = _extract_from_payload(source, EXTERNAL_FIELD_CANDIDATES["ocr_text"])
+    if not raw_text:
+        raw_text = json.dumps(source, ensure_ascii=False)
+
+    for field_name in data.keys():
+        value = _extract_from_payload(
+            source,
+            EXTERNAL_FIELD_CANDIDATES.get(field_name, []),
+        )
+        if field_name == "nni" and value:
+            value = re.sub(r"\D", "", _normalize_nni_candidate(value))
+        if field_name == "sexe" and value:
+            value = value.upper()
+        data[field_name] = value
+
+    parsed_from_text = parse_mauritanian_id(raw_text)
+    for field_name, value in parsed_from_text.items():
+        if not data.get(field_name) and value:
+            data[field_name] = value
+
+    return {
+        "ocr_text": raw_text,
+        "fields": data,
+        "raw_payload": source,
+    }
 
 
 def _looks_like_label(normalized_line):

@@ -11,14 +11,20 @@ from rest_framework_simplejwt.tokens import (AccessToken)
 
 from datetime import timedelta
 from urllib.parse import urlencode
+import base64
+import hashlib
+import secrets
 
 from users.models import Utilisateur
 
 import requests
 import random
+import time
 
 OTP_EXPIRY_MINUTES = 10
 NOVA_SSO_SCOPE = "openid profile email phone"
+NOVA_PKCE_TTL_SECONDS = 600
+_nova_pkce_store = {}
 
 
 def _normalize_phone(value):
@@ -110,9 +116,56 @@ def _nova_required_config_flags():
     }
 
 
+def _cleanup_nova_pkce_store():
+
+    now = time.time()
+    expired_states = [
+        state
+        for state, payload in _nova_pkce_store.items()
+        if payload.get("expires_at", 0) <= now
+    ]
+
+    for state in expired_states:
+        _nova_pkce_store.pop(state, None)
+
+
+def _generate_pkce_pair():
+
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(
+            verifier.encode("utf-8")
+        ).digest()
+    ).rstrip(b"=").decode("utf-8")
+
+    return verifier, challenge
+
+
+def _store_nova_pkce_state(state, verifier):
+
+    _cleanup_nova_pkce_store()
+    _nova_pkce_store[state] = {
+        "verifier": verifier,
+        "expires_at": time.time() + NOVA_PKCE_TTL_SECONDS,
+    }
+
+
+def _pop_nova_pkce_verifier(state):
+
+    _cleanup_nova_pkce_store()
+    payload = _nova_pkce_store.pop(state, None)
+
+    if not payload:
+        return ""
+
+    return str(payload.get("verifier", "")).strip()
+
+
 def _build_nova_authorization_url():
 
     state = get_random_string(32)
+    verifier, challenge = _generate_pkce_pair()
+    _store_nova_pkce_state(state, verifier)
     query = urlencode(
         {
             "client_id": settings.NOVA_SSO_CLIENT_ID,
@@ -120,13 +173,15 @@ def _build_nova_authorization_url():
             "response_type": "code",
             "scope": NOVA_SSO_SCOPE,
             "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
         }
     )
 
     return f"{settings.NOVA_SSO_AUTHORIZE_URL}?{query}", state
 
 
-def _request_nova_token(code):
+def _request_nova_token(code, code_verifier):
 
     response = requests.post(
         settings.NOVA_SSO_TOKEN_URL,
@@ -136,6 +191,7 @@ def _request_nova_token(code):
             "client_secret": settings.NOVA_SSO_CLIENT_SECRET,
             "redirect_uri": settings.NOVA_SSO_REDIRECT_URI,
             "code": code,
+            "code_verifier": code_verifier,
         },
         headers={
             "Accept": "application/json",
@@ -1181,6 +1237,7 @@ def sso_nova(request):
         )
 
     code = str(request.data.get("code", "")).strip()
+    state = str(request.data.get("state", "")).strip()
 
     if not code:
         return Response(
@@ -1190,8 +1247,25 @@ def sso_nova(request):
             status=400,
         )
 
+    if not state:
+        return Response(
+            {
+                "error": "State PKCE manquant."
+            },
+            status=400,
+        )
+
+    code_verifier = _pop_nova_pkce_verifier(state)
+    if not code_verifier:
+        return Response(
+            {
+                "error": "Session PKCE expirée ou introuvable. Relancez Nova SSO."
+            },
+            status=400,
+        )
+
     try:
-        token_payload = _request_nova_token(code)
+        token_payload = _request_nova_token(code, code_verifier)
         profile = _request_nova_userinfo(token_payload.get("access_token", ""))
         user = _sync_nova_user(profile)
         return _build_auth_response(user)

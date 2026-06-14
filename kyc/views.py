@@ -130,19 +130,41 @@ def _populate_ocr_fields(kyc, request_data=None):
 
     try:
         from .ocr_utils import (
+            call_external_ocr_api,
+            parse_external_ocr_payload,
             extract_text_from_image,
             parse_mauritanian_id
         )
 
         if kyc.id_document:
+            try:
+                external_payload = call_external_ocr_api(
+                    kyc.id_document.path
+                )
+                external_result = parse_external_ocr_payload(
+                    external_payload
+                )
+                extracted_text = external_result.get(
+                    "ocr_text",
+                    ""
+                )
+                parsed_data = external_result.get(
+                    "fields",
+                    parsed_data
+                )
+            except Exception as external_error:
+                print(
+                    "EXTERNAL OCR ERROR =>",
+                    str(external_error)
+                )
 
-            extracted_text = extract_text_from_image(
-                kyc.id_document.path
-            )
+                extracted_text = extract_text_from_image(
+                    kyc.id_document.path
+                )
 
-            parsed_data = parse_mauritanian_id(
-                extracted_text
-            )
+                parsed_data = parse_mauritanian_id(
+                    extracted_text
+                )
 
     except Exception as e:
 

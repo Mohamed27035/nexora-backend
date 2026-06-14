@@ -17,6 +17,7 @@ from .views import (
     get_my_logs,
     get_my_profile,
     get_my_stats,
+    get_security_status,
     get_user,
     get_users,
     register_client,
@@ -48,6 +49,7 @@ urlpatterns = [
     path("logs/", get_logs),
     path("audit/", get_audit),
     path("timeline/", get_activity_timeline),
+    path("security-status/", get_security_status),
     path("detect-anomalies/", detect_anomalies),
     path("detect-behavior/", detect_suspicious_behavior),
     path("track-login/", track_login),
@@ -55,4 +57,3 @@ urlpatterns = [
     path("forgot-password/", forgot_password, name="forgot_password"),
     path("register/", register_client),
 ]
-

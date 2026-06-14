@@ -27,6 +27,12 @@ services:
         sync: false
       - key: DEMO_OTP_MODE
         value: "False"
+      - key: NOVA_OCR_BASE_URL
+        value: "http://51.20.136.48:8000"
+      - key: NOVA_OCR_API_KEY
+        sync: false
+      - key: NOVA_OCR_TIMEOUT
+        value: "45"
       - key: RSS_SOC_APP_NAME
         value: "nexora-api"
       - key: RSS_SOC_URL

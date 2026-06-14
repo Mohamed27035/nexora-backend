@@ -541,3 +541,24 @@ def log_security_event(event, ip, request=None, extra=None):
     if extra:
         data.update(extra)
     _push_event(event, data, job="django-security")
+
+
+def get_security_status_snapshot():
+    with _ban_lock:
+        active_bans = 0
+        now = time.time()
+        for expiry in _banned_ips.values():
+            if expiry > now:
+                active_bans += 1
+
+    return {
+        "app_name": APP_NAME,
+        "soc_url": SOC_URL,
+        "environment": ENV_NAME,
+        "block_attacks": BLOCK_ATTACKS,
+        "ban_duration": BAN_DURATION,
+        "local_logs": LOCAL_LOGS,
+        "email_alerts": SEND_EMAIL,
+        "active_banned_ips": active_bans,
+        "worker_started": _worker_started,
+    }

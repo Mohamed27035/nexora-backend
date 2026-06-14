@@ -14,6 +14,14 @@ from email_service.services import (
 from logs.models import Log
 from notifications.models import Notification
 from transactions.models import Transaction
+try:
+    from apps.core.security_middleware import (
+        get_security_status_snapshot,
+        log_security_event,
+    )
+except Exception:
+    get_security_status_snapshot = None
+    log_security_event = None
 
 from .models import Utilisateur
 from .serializers import UtilisateurSerializer
@@ -46,6 +54,20 @@ CRITICAL_ACTIONS = {
     "REJECT_TRANSACTION",
     "APPROVE_KYC",
     "REJECT_KYC",
+}
+
+SOC_MIRRORED_ACTIONS = {
+    "DELETE_USER",
+    "SUSPEND_USER",
+    "BAN_USER",
+    "CHANGE_ROLE",
+    "RESET_PASSWORD",
+    "APPROVE_KYC",
+    "REJECT_KYC",
+    "CREATE_TRANSACTION",
+    "APPROVE_TRANSACTION",
+    "REJECT_TRANSACTION",
+    "SUBMIT_KYC",
 }
 
 
@@ -217,6 +239,28 @@ def create_log(
                 "Security Alert",
                 f"Suspicious action detected: {action}",
                 "danger",
+            )
+
+        should_mirror_to_soc = action in SOC_MIRRORED_ACTIONS or is_suspicious
+        if should_mirror_to_soc and log_security_event:
+            ip_address = (
+                payload.get("ip")
+                or payload.get("client_ip")
+                or ""
+            )
+            log_security_event(
+                action,
+                ip_address or "internal",
+                extra={
+                    "severity": final_severity,
+                    "entity_type": entity_type,
+                    "entity_id": str(entity_id or ""),
+                    "target": target_repr or "",
+                    "description": target or "",
+                    "actor_email": getattr(user, "email", "") if user else "",
+                    "actor_id": getattr(user, "id", None) if user else None,
+                    "metadata": payload,
+                },
             )
     except Exception:
         pass
@@ -1013,6 +1057,52 @@ def get_activity_timeline(request):
 
     timeline.sort(key=lambda item: item["date"], reverse=True)
     return Response(timeline[:40])
+
+
+@api_view(["GET"])
+def get_security_status(request):
+    current_user, error = _require_auth(request)
+    if error:
+        return error
+
+    if not (is_admin(current_user) or is_auditeur(current_user)):
+        return _error("Accès refusé", 403)
+
+    logs = Log.objects.all()
+    suspicious_logs = logs.filter(is_suspicious=True)
+    critical_logs = logs.filter(severity="CRITICAL")
+    today = timezone.now().date()
+
+    snapshot = (
+        get_security_status_snapshot()
+        if get_security_status_snapshot
+        else {
+            "app_name": "nexora-api",
+            "soc_url": "",
+            "environment": "unknown",
+            "block_attacks": False,
+            "ban_duration": 0,
+            "local_logs": "",
+            "email_alerts": False,
+            "active_banned_ips": 0,
+            "worker_started": False,
+        }
+    )
+
+    return Response(
+        {
+            "soc": snapshot,
+            "overview": {
+                "total_logs": logs.count(),
+                "suspicious_logs": suspicious_logs.count(),
+                "critical_logs": critical_logs.count(),
+                "today_suspicious": suspicious_logs.filter(date__date=today).count(),
+                "today_critical": critical_logs.filter(date__date=today).count(),
+            },
+            "suspicious_actions": sorted(SUSPICIOUS_ACTIONS),
+            "critical_actions": sorted(CRITICAL_ACTIONS),
+        }
+    )
 
 
 @api_view(["POST"])
