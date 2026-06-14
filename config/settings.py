@@ -18,9 +18,6 @@ DEBUG = os.environ.get(
 ) == "True"
 
 
-GOOGLE_OAUTH2_CLIENT_ID = os.environ.get("GOOGLE_OAUTH2_CLIENT_ID", "")
-
-
 def env_flag(name, default="False"):
 
     return os.environ.get(
@@ -32,6 +29,15 @@ def env_flag(name, default="False"):
         "yes",
         "on"
     )
+
+
+NOVA_SSO_ENABLED = env_flag("NOVA_SSO_ENABLED")
+NOVA_SSO_CLIENT_ID = os.environ.get("NOVA_SSO_CLIENT_ID", "")
+NOVA_SSO_CLIENT_SECRET = os.environ.get("NOVA_SSO_CLIENT_SECRET", "")
+NOVA_SSO_AUTHORIZE_URL = os.environ.get("NOVA_SSO_AUTHORIZE_URL", "")
+NOVA_SSO_TOKEN_URL = os.environ.get("NOVA_SSO_TOKEN_URL", "")
+NOVA_SSO_USERINFO_URL = os.environ.get("NOVA_SSO_USERINFO_URL", "")
+NOVA_SSO_REDIRECT_URI = os.environ.get("NOVA_SSO_REDIRECT_URI", "")
 
 
 DEMO_OTP_MODE = env_flag(

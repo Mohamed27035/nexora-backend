@@ -1,5 +1,6 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from django.http import HttpResponse
 from email_service.services import send_system_email, EmailServiceError, has_email_provider_configured
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -929,147 +930,86 @@ def verify_welcome_otp(request):
         }, status=500)
 
 # ==========================================
-# SSO GOOGLE (ID TOKEN -> JWT)
+# SSO NOVA (PREPARED PLACEHOLDER)
 # ==========================================
 
 @api_view(['POST'])
-def sso_google(request):
+def sso_nova(request):
 
-    if not getattr(settings, "GOOGLE_OAUTH2_CLIENT_ID", ""):
-
-        return Response({
-
-            "error":
-            "SSO not configured (missing GOOGLE_OAUTH2_CLIENT_ID)"
-
-        }, status=500)
-
-    token = request.data.get(
-        "id_token",
-        ""
-    ).strip()
-
-    if not token:
+    if not getattr(settings, "NOVA_SSO_ENABLED", False):
 
         return Response({
 
             "error":
-            "id_token is required"
+            "Nova SSO non configure pour le moment",
 
-        }, status=400)
+            "details":
+            "Ajoutez les parametres NOVA_SSO_* pour activer l'integration entreprise."
 
-    try:
-
-        from google.oauth2 import id_token as google_id_token
-        from google.auth.transport import requests as google_requests
-
-        info = google_id_token.verify_oauth2_token(
-
-            token,
-
-            google_requests.Request(),
-
-            settings.GOOGLE_OAUTH2_CLIENT_ID,
-        )
-
-    except Exception:
-
-        return Response({
-
-            "error":
-            "Invalid Google token"
-
-        }, status=401)
-
-    email = (info.get(
-        "email"
-    ) or "").strip().lower()
-
-    if not email:
-
-        return Response({
-
-            "error":
-            "Google token missing email"
-
-        }, status=400)
-
-    user = Utilisateur.objects.filter(
-        email__iexact=email
-    ).first()
-
-    if not user:
-
-        user = Utilisateur.objects.create(
-
-            nom=(info.get(
-                "family_name"
-            ) or info.get(
-                "name"
-            ) or "").strip() or "GoogleUser",
-
-            prenom=(info.get(
-                "given_name"
-            ) or "").strip() or None,
-
-            email=email,
-
-            password=make_password(
-                get_random_string(
-                    48
-                )
-            ),
-
-            role="CLIENT",
-
-            is_verified=True,
-        )
-
-    if user.is_banned:
-
-        return Response({
-
-            "error":
-            "Compte banni"
-
-        }, status=403)
-
-    if user.is_suspended:
-
-        return Response({
-
-            "error":
-            "Compte suspendu"
-
-        }, status=403)
-
-    refresh = RefreshToken.for_user(
-        user
-    )
+        }, status=501)
 
     return Response({
 
-        "access":
-        str(refresh.access_token),
+        "error":
+        "Nova SSO pret cote backend, mais le flux OAuth/OIDC final de l'entreprise n'est pas encore branche.",
 
-        "refresh":
-        str(refresh),
-
-        "user": {
-
-            "id":
-            user.id,
-
-            "nom":
-            user.nom,
-
-            "prenom":
-            user.prenom,
-
-            "email":
-            user.email,
-
-            "role":
-            user.role,
+        "required_config": {
+            "client_id": bool(getattr(settings, "NOVA_SSO_CLIENT_ID", "")),
+            "client_secret": bool(getattr(settings, "NOVA_SSO_CLIENT_SECRET", "")),
+            "authorize_url": bool(getattr(settings, "NOVA_SSO_AUTHORIZE_URL", "")),
+            "token_url": bool(getattr(settings, "NOVA_SSO_TOKEN_URL", "")),
+            "userinfo_url": bool(getattr(settings, "NOVA_SSO_USERINFO_URL", "")),
+            "redirect_uri": bool(getattr(settings, "NOVA_SSO_REDIRECT_URI", "")),
         }
-    })
+
+    }, status=501)
+
+
+@api_view(['GET'])
+def sso_nova_callback(request):
+
+    code = request.GET.get("code", "")
+    state = request.GET.get("state", "")
+    error = request.GET.get("error", "")
+    error_description = request.GET.get("error_description", "")
+
+    if error:
+        return HttpResponse(
+            (
+                "<html><body style='font-family:Arial,sans-serif;padding:32px;'>"
+                "<h2>Retour Nova SSO</h2>"
+                f"<p><strong>Erreur :</strong> {error}</p>"
+                f"<p><strong>Description :</strong> {error_description or 'Aucune description'}</p>"
+                "<p>Le callback fonctionne, mais l'authentification a ete refusee ou interrompue.</p>"
+                "</body></html>"
+            ),
+            content_type="text/html; charset=utf-8",
+            status=400,
+        )
+
+    if not code:
+        return HttpResponse(
+            (
+                "<html><body style='font-family:Arial,sans-serif;padding:32px;'>"
+                "<h2>Retour Nova SSO</h2>"
+                "<p>Aucun code d'autorisation n'a ete recu.</p>"
+                "<p>Le callback backend est bien accessible, mais Nova n'a pas renvoye de code OAuth.</p>"
+                "</body></html>"
+            ),
+            content_type="text/html; charset=utf-8",
+            status=400,
+        )
+
+    return HttpResponse(
+        (
+            "<html><body style='font-family:Arial,sans-serif;padding:32px;'>"
+            "<h2>Retour Nova SSO</h2>"
+            "<p>Le callback backend fonctionne correctement.</p>"
+            f"<p><strong>Code recu :</strong> {code}</p>"
+            f"<p><strong>State :</strong> {state or 'Non fourni'}</p>"
+            "<p>Prochaine etape : echanger ce code contre un token OAuth dans l'integration finale.</p>"
+            "</body></html>"
+        ),
+        content_type="text/html; charset=utf-8",
+        status=200,
+    )

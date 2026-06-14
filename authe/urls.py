@@ -8,7 +8,8 @@ from .views import (
     verify_otp,
     send_welcome_otp,
     verify_welcome_otp,
-    sso_google,
+    sso_nova,
+    sso_nova_callback,
 )
 
 
@@ -50,7 +51,12 @@ urlpatterns = [
     ),
 
     path(
-        'sso/google/',
-        sso_google
+        'sso/nova/',
+        sso_nova
+    ),
+
+    path(
+        'sso/nova/callback/',
+        sso_nova_callback
     ),
 ]

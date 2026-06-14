@@ -16,6 +16,7 @@ class KYCRequestSerializer(serializers.ModelSerializer):
     id_document_url = serializers.SerializerMethodField()
     selfie_url = serializers.SerializerMethodField()
     ocr_complete = serializers.SerializerMethodField()
+    ocr_data = serializers.SerializerMethodField()
 
     class Meta:
         model = KYCRequest
@@ -35,6 +36,7 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "submitted_at",
             "reviewed_at",
             "ocr_text",
+            "ocr_data",
             "nni",
             "prenom",
             "prenom_pere",
@@ -59,6 +61,7 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "id_document_url",
             "selfie_url",
             "ocr_complete",
+            "ocr_data",
             "utilisateur_name",
             "utilisateur_full_name",
             "reviewed_by_name",
@@ -100,3 +103,32 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             ]
         )
 
+    def get_ocr_data(self, obj):
+        values = {
+            "nni": obj.nni or "",
+            "prenom": obj.prenom or "",
+            "prenom_pere": obj.prenom_pere or "",
+            "nom_famille": obj.nom_famille or "",
+            "sexe": obj.sexe or "",
+            "date_naissance": obj.date_naissance or "",
+            "lieu_naissance": obj.lieu_naissance or "",
+        }
+
+        if any(values.values()):
+            return values
+
+        raw_text = (obj.ocr_text or "").strip()
+        if not raw_text:
+            return values
+
+        try:
+            from .ocr_utils import parse_mauritanian_id
+
+            parsed = parse_mauritanian_id(raw_text) or {}
+        except Exception:
+            parsed = {}
+
+        for key in values.keys():
+            values[key] = parsed.get(key, "") or ""
+
+        return values

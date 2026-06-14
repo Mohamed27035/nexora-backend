@@ -13,8 +13,25 @@ from users.views import (
     create_log,
     is_admin
 )
+from users.models import Utilisateur
 
 from notifications.models import Notification
+
+
+def _notify_admins_about_kyc(kyc, message):
+    try:
+        admins = Utilisateur.objects.filter(role__in=["ADMIN", "ADMINISTRATEUR"])
+        for admin in admins:
+            if admin.id == kyc.utilisateur_id:
+                continue
+            Notification.objects.create(
+                utilisateur=admin,
+                title="Nouvelle demande KYC",
+                message=message,
+                type="info",
+            )
+    except Exception as e:
+        print("ADMIN KYC NOTIFICATION ERROR =>", str(e))
 
 
 def _normalize_uploaded_image(instance, field_name, target_name):
@@ -143,43 +160,72 @@ def _populate_ocr_fields(kyc, request_data=None):
         )
     )
 
-    kyc.nni = _fallback_ocr_value(
+    kyc.nni = _request_ocr_value(
+        source_data,
+        "nni",
+        "NNI"
+    ) or _fallback_ocr_value(
         parsed_data["nni"],
         source_data,
         "nni"
     )
 
-    kyc.prenom = _fallback_ocr_value(
+    kyc.prenom = _request_ocr_value(
+        source_data,
+        "prenom",
+        "first_name"
+    ) or _fallback_ocr_value(
         parsed_data["prenom"],
         source_data,
         "prenom"
     )
 
-    kyc.prenom_pere = _fallback_ocr_value(
+    kyc.prenom_pere = _request_ocr_value(
+        source_data,
+        "prenom_pere",
+        "father_name"
+    ) or _fallback_ocr_value(
         parsed_data["prenom_pere"],
         source_data,
         "prenom_pere"
     )
 
-    kyc.nom_famille = _fallback_ocr_value(
+    kyc.nom_famille = _request_ocr_value(
+        source_data,
+        "nom_famille",
+        "last_name",
+        "surname"
+    ) or _fallback_ocr_value(
         parsed_data["nom_famille"],
         source_data,
         "nom_famille"
     )
 
-    kyc.sexe = _fallback_ocr_value(
+    kyc.sexe = _request_ocr_value(
+        source_data,
+        "sexe",
+        "sex"
+    ) or _fallback_ocr_value(
         parsed_data["sexe"],
         source_data,
         "sexe"
     )
 
-    kyc.date_naissance = _fallback_ocr_value(
+    kyc.date_naissance = _request_ocr_value(
+        source_data,
+        "date_naissance",
+        "birth_date"
+    ) or _fallback_ocr_value(
         parsed_data["date_naissance"],
         source_data,
         "date_naissance"
     )
 
-    kyc.lieu_naissance = _fallback_ocr_value(
+    kyc.lieu_naissance = _request_ocr_value(
+        source_data,
+        "lieu_naissance",
+        "birth_place"
+    ) or _fallback_ocr_value(
         parsed_data["lieu_naissance"],
         source_data,
         "lieu_naissance"
@@ -255,6 +301,76 @@ def _fallback_ocr_value(primary_value, request_data, key):
     return value.strip() if isinstance(value, str) else value
 
 
+def _request_ocr_value(request_data, *keys):
+
+    for key in keys:
+        value = request_data.get(
+            key,
+            ""
+        )
+
+        if isinstance(value, str):
+            value = value.strip()
+
+        if value not in [None, ""]:
+            return value
+
+    return ""
+
+
+def _backfill_ocr_fields_from_text(kyc):
+
+    if any([
+        bool(kyc.nni),
+        bool(kyc.prenom),
+        bool(kyc.prenom_pere),
+        bool(kyc.nom_famille),
+        bool(kyc.sexe),
+        bool(kyc.date_naissance),
+        bool(kyc.lieu_naissance),
+    ]):
+        return False
+
+    raw_text = (kyc.ocr_text or "").strip()
+    if not raw_text:
+        return False
+
+    try:
+        from .ocr_utils import parse_mauritanian_id
+
+        parsed = parse_mauritanian_id(
+            raw_text
+        ) or {}
+    except Exception as e:
+        print(
+            "KYC OCR BACKFILL ERROR =>",
+            str(e)
+        )
+        return False
+
+    kyc.nni = parsed.get("nni", "") or ""
+    kyc.prenom = parsed.get("prenom", "") or ""
+    kyc.prenom_pere = parsed.get("prenom_pere", "") or ""
+    kyc.nom_famille = parsed.get("nom_famille", "") or ""
+    kyc.sexe = parsed.get("sexe", "") or ""
+    kyc.date_naissance = parsed.get("date_naissance", "") or ""
+    kyc.lieu_naissance = parsed.get("lieu_naissance", "") or ""
+
+    kyc.save(
+        update_fields=[
+            "nni",
+            "prenom",
+            "prenom_pere",
+            "nom_famille",
+            "sexe",
+            "date_naissance",
+            "lieu_naissance",
+        ]
+    )
+
+    return True
+
+
 # ==========================
 # SUBMIT KYC
 # ==========================
@@ -268,91 +384,114 @@ def submit_kyc(request):
     if error:
         return error
 
-    # already submitted
     existing = KYCRequest.objects.filter(
         utilisateur=user,
         status="PENDING"
     ).first()
-
-    if existing:
-
-        return Response({
-
-            "error":
-            "Pending KYC already exists"
-
-        }, status=400)
 
     data = request.data.copy()
 
     data["utilisateur"] = user.id
 
     serializer = KYCRequestSerializer(
-        data=data
+        existing,
+        data=data,
+        partial=existing is not None,
     )
 
-    if serializer.is_valid():
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=400
+        )
 
-        kyc = serializer.save()
-        _ensure_kyc_assets_ready(
+    kyc = serializer.save()
+
+    if existing:
+        kyc.status = "PENDING"
+        kyc.review_note = ""
+        kyc.reviewed_by = None
+        kyc.reviewed_at = None
+        kyc.save(
+            update_fields=[
+                "status",
+                "review_note",
+                "reviewed_by",
+                "reviewed_at",
+            ]
+        )
+
+    _ensure_kyc_assets_ready(
+        kyc,
+        request_data=request.data
+    )
+    try:
+        _populate_ocr_fields(
             kyc,
-            request_data=request.data
+            request.data
         )
-        try:
-            _populate_ocr_fields(
-                kyc,
-                request.data
-            )
-        except Exception as e:
-            print(
-                "SUBMIT KYC OCR ERROR =>",
-                str(e)
-            )
-        create_log(
-
-            user,
-
-            "SUBMIT_KYC",
-
-            f"kyc_id={kyc.id}",
-            entity_type="KYC",
-            entity_id=kyc.id,
-            target_repr=kyc.utilisateur.email,
-            metadata={
-                "status": "PENDING",
-                "user_id": kyc.utilisateur_id,
-                "ocr_complete": bool(
-                    kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
-                ),
-            },
+    except Exception as e:
+        print(
+            "SUBMIT KYC OCR ERROR =>",
+            str(e)
         )
 
-        Notification.objects.create(
+    create_log(
 
-            utilisateur=user,
+        user,
 
-            title="KYC soumis",
+        "SUBMIT_KYC",
 
-            message=(
-                "Votre demande KYC est en attente"
+        f"kyc_id={kyc.id}",
+        entity_type="KYC",
+        entity_id=kyc.id,
+        target_repr=kyc.utilisateur.email,
+        metadata={
+            "status": "PENDING",
+            "user_id": kyc.utilisateur_id,
+            "updated_existing": bool(existing),
+            "ocr_complete": bool(
+                kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
             ),
-
-            type="info"
-        )
-
-        return Response({
-
-            "message":
-            "KYC soumis"
-
-        })
-
-    return Response(
-
-        serializer.errors,
-
-        status=400
+        },
     )
+
+    Notification.objects.create(
+
+        utilisateur=user,
+
+        title="KYC soumis",
+
+        message=(
+            "Votre demande KYC est en attente"
+            if not existing
+            else "Votre demande KYC en attente a ete mise a jour"
+        ),
+
+        type="info"
+    )
+
+    _notify_admins_about_kyc(
+        kyc,
+        (
+            f"Nouvelle demande KYC envoyee par {user.nom}"
+            if not existing
+            else f"Demande KYC mise a jour par {user.nom}"
+        ),
+    )
+
+    return Response({
+
+        "message":
+        "KYC soumis"
+        if not existing
+        else "KYC mis a jour",
+        "kyc": KYCRequestSerializer(
+            kyc,
+            context={"request": request}
+        ).data
+
+    })
 
 
 # ==========================
@@ -377,6 +516,9 @@ def get_my_kyc(request):
     for item in kyc:
         try:
             _ensure_kyc_assets_ready(
+                item
+            )
+            _backfill_ocr_fields_from_text(
                 item
             )
         except Exception as e:
@@ -460,6 +602,9 @@ def get_all_kyc(request):
     for item in kyc:
         try:
             _ensure_kyc_assets_ready(
+                item
+            )
+            _backfill_ocr_fields_from_text(
                 item
             )
         except Exception as e:
