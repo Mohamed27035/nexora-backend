@@ -4,6 +4,16 @@ from .models import KYCRequest
 
 
 class KYCRequestSerializer(serializers.ModelSerializer):
+    REQUIRED_OCR_FIELDS = [
+        "nni",
+        "prenom",
+        "prenom_pere",
+        "nom_famille",
+        "sexe",
+        "date_naissance",
+        "lieu_naissance",
+    ]
+
     utilisateur_name = serializers.CharField(
         source="utilisateur.nom",
         read_only=True,
@@ -17,6 +27,13 @@ class KYCRequestSerializer(serializers.ModelSerializer):
     selfie_url = serializers.SerializerMethodField()
     ocr_complete = serializers.SerializerMethodField()
     ocr_data = serializers.SerializerMethodField()
+    ocr_confidence = serializers.SerializerMethodField()
+    ocr_extracted_fields = serializers.SerializerMethodField()
+    ocr_required_fields = serializers.SerializerMethodField()
+    ocr_missing_fields = serializers.SerializerMethodField()
+    face_detected = serializers.SerializerMethodField()
+    face_confidence = serializers.SerializerMethodField()
+    biometric_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = KYCRequest
@@ -37,6 +54,10 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "reviewed_at",
             "ocr_text",
             "ocr_data",
+            "ocr_confidence",
+            "ocr_extracted_fields",
+            "ocr_required_fields",
+            "ocr_missing_fields",
             "nni",
             "prenom",
             "prenom_pere",
@@ -49,6 +70,9 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "biometric_message",
             "biometric_reference",
             "biometric_raw",
+            "face_detected",
+            "face_confidence",
+            "biometric_summary",
             "ocr_complete",
         ]
         read_only_fields = [
@@ -70,6 +94,13 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "biometric_raw",
             "id_document_url",
             "selfie_url",
+            "ocr_confidence",
+            "ocr_extracted_fields",
+            "ocr_required_fields",
+            "ocr_missing_fields",
+            "face_detected",
+            "face_confidence",
+            "biometric_summary",
             "ocr_complete",
             "ocr_data",
             "utilisateur_name",
@@ -103,15 +134,33 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         return self._build_file_url(obj, "selfie")
 
     def get_ocr_complete(self, obj):
-        return any(
-            [
-                bool(obj.ocr_text),
-                bool(obj.nni),
-                bool(obj.prenom),
-                bool(obj.nom_famille),
-                bool(obj.date_naissance),
-            ]
+        return self._ocr_extracted_count(obj) > 0
+
+    def _ocr_extracted_count(self, obj):
+        return sum(
+            1
+            for field_name in self.REQUIRED_OCR_FIELDS
+            if bool(getattr(obj, field_name, None))
         )
+
+    def _normalize_score(self, value):
+        if value in [None, ""]:
+            return None
+
+        try:
+            score = float(value)
+        except Exception:
+            return None
+
+        if score <= 1:
+            score *= 100
+
+        if score < 0:
+            score = 0
+        if score > 100:
+            score = 100
+
+        return round(score, 2)
 
     def get_ocr_data(self, obj):
         values = {
@@ -142,3 +191,58 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             values[key] = parsed.get(key, "") or ""
 
         return values
+
+    def get_ocr_confidence(self, obj):
+        required = len(self.REQUIRED_OCR_FIELDS)
+        if required == 0:
+            return 0.0
+        return round((self._ocr_extracted_count(obj) / required) * 100, 2)
+
+    def get_ocr_extracted_fields(self, obj):
+        return self._ocr_extracted_count(obj)
+
+    def get_ocr_required_fields(self, obj):
+        return len(self.REQUIRED_OCR_FIELDS)
+
+    def get_ocr_missing_fields(self, obj):
+        missing = []
+        for field_name in self.REQUIRED_OCR_FIELDS:
+            if not getattr(obj, field_name, None):
+                missing.append(field_name)
+        return missing
+
+    def get_face_confidence(self, obj):
+        score = self._normalize_score(obj.biometric_score)
+        if score is not None:
+            return score
+
+        if obj.biometric_status == "VERIFIED":
+            return 100.0
+        if obj.biometric_status == "FAILED":
+            return 0.0
+        return None
+
+    def get_face_detected(self, obj):
+        if obj.biometric_status == "VERIFIED":
+            return True
+
+        score = self._normalize_score(obj.biometric_score)
+        if score is not None:
+            return score > 0
+
+        raw = obj.biometric_raw or {}
+        if isinstance(raw, dict) and raw:
+            if raw.get("error"):
+                return False
+            return True
+
+        return False
+
+    def get_biometric_summary(self, obj):
+        return {
+            "status": obj.biometric_status,
+            "confidence": self.get_face_confidence(obj),
+            "face_detected": self.get_face_detected(obj),
+            "message": obj.biometric_message or "",
+            "reference": obj.biometric_reference or "",
+        }
