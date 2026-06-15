@@ -1,4 +1,5 @@
 from decimal import Decimal
+from io import BytesIO
 
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
@@ -177,10 +178,8 @@ def export_pdf(request):
 
     stats = stats_response.data
 
-    response = HttpResponse(content_type="application/pdf")
-    response["Content-Disposition"] = 'attachment; filename="reporting_summary.pdf"'
-
-    doc = SimpleDocTemplate(response)
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
     content = [
         Paragraph("Nexora Reporting Summary", styles["Title"]),
@@ -211,6 +210,12 @@ def export_pdf(request):
     ]
 
     doc.build(content)
+
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = 'attachment; filename="reporting_summary.pdf"'
 
     create_log(
         user,

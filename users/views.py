@@ -522,7 +522,7 @@ def update_user(request, id):
     return Response(serialize_user(user, request))
 
 
-@api_view(["DELETE"])
+@api_view(["DELETE", "POST"])
 def delete_user(request, id):
     current_user, error = _require_admin(request)
     if error:
