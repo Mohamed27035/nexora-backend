@@ -35,6 +35,7 @@ urlpatterns = [
     path("<int:id>/", get_user),
     path("update/<int:id>/", update_user),
     path("delete/<int:id>/", delete_user),
+    path("<int:id>/delete/", delete_user),
     path("suspend/<int:id>/", suspend_user),
     path("activate/<int:id>/", activate_user),
     path("ban/<int:id>/", ban_user),

@@ -3,7 +3,7 @@ from io import BytesIO
 from django.http import HttpResponse
 
 from transactions.models import Transaction
-from users.views import create_log, get_current_user, is_admin, is_comptable
+from users.views import create_log, get_current_user, is_admin, is_auditeur, is_comptable
 
 
 def _unauthorized():
@@ -19,7 +19,7 @@ def _require_reporting_access(request):
     if error:
         return None, _unauthorized()
 
-    if not (is_admin(current_user) or is_comptable(current_user)):
+    if not (is_admin(current_user) or is_comptable(current_user) or is_auditeur(current_user)):
         return None, _forbidden()
 
     return current_user, None

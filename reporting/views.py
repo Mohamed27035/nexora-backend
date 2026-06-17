@@ -10,7 +10,7 @@ from kyc.models import KYCRequest
 from logs.models import Log
 from transactions.models import Transaction
 from users.models import Utilisateur
-from users.views import create_log, get_current_user, is_admin, is_comptable
+from users.views import create_log, get_current_user, is_admin, is_auditeur, is_comptable
 
 
 def _error(message, status=400):
@@ -22,7 +22,7 @@ def _require_reporting_access(request):
     if error:
         return None, error
 
-    if not (is_admin(user) or is_comptable(user)):
+    if not (is_admin(user) or is_comptable(user) or is_auditeur(user)):
         return None, _error("Acces refuse", 403)
 
     return user, None
