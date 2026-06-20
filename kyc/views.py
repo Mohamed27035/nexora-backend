@@ -468,134 +468,145 @@ def _backfill_ocr_fields_from_text(kyc):
 # ==========================
 @api_view(['POST'])
 def submit_kyc(request):
-
-    user, error = get_current_user(
-        request
-    )
-
-    if error:
-        return error
-
-    existing = KYCRequest.objects.filter(
-        utilisateur=user,
-        status="PENDING"
-    ).first()
-
-    data = request.data.copy()
-
-    data["utilisateur"] = user.id
-
-    serializer = KYCRequestSerializer(
-        existing,
-        data=data,
-        partial=existing is not None,
-    )
-
-    if not serializer.is_valid():
-        return Response(
-            serializer.errors,
-            status=400
-        )
-
-    kyc = serializer.save()
-
-    if existing:
-        kyc.status = "PENDING"
-        kyc.review_note = ""
-        kyc.reviewed_by = None
-        kyc.reviewed_at = None
-        kyc.save(
-            update_fields=[
-                "status",
-                "review_note",
-                "reviewed_by",
-                "reviewed_at",
-            ]
-        )
-
-    _ensure_kyc_assets_ready(
-        kyc,
-        request_data=request.data
-    )
     try:
-        _populate_ocr_fields(
+        user, error = get_current_user(
+            request
+        )
+
+        if error:
+            return error
+
+        existing = KYCRequest.objects.filter(
+            utilisateur=user,
+            status="PENDING"
+        ).first()
+
+        data = request.data.copy()
+        data["utilisateur"] = user.id
+
+        serializer = KYCRequestSerializer(
+            existing,
+            data=data,
+            partial=existing is not None,
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=400
+            )
+
+        kyc = serializer.save()
+
+        if existing:
+            kyc.status = "PENDING"
+            kyc.review_note = ""
+            kyc.reviewed_by = None
+            kyc.reviewed_at = None
+            kyc.save(
+                update_fields=[
+                    "status",
+                    "review_note",
+                    "reviewed_by",
+                    "reviewed_at",
+                ]
+            )
+
+        _ensure_kyc_assets_ready(
             kyc,
-            request.data
-        )
-    except Exception as e:
-        print(
-            "SUBMIT KYC OCR ERROR =>",
-            str(e)
+            request_data=request.data
         )
 
-    try:
-        _run_biometric_verification(
-            kyc
+        try:
+            _populate_ocr_fields(
+                kyc,
+                request.data
+            )
+        except Exception as e:
+            print(
+                "SUBMIT KYC OCR ERROR =>",
+                str(e)
+            )
+
+        try:
+            _run_biometric_verification(
+                kyc
+            )
+        except Exception as e:
+            print(
+                "SUBMIT KYC BIOMETRIC ERROR =>",
+                str(e)
+            )
+
+        create_log(
+
+            user,
+
+            "SUBMIT_KYC",
+
+            f"kyc_id={kyc.id}",
+            entity_type="KYC",
+            entity_id=kyc.id,
+            target_repr=kyc.utilisateur.email,
+            metadata={
+                "status": "PENDING",
+                "user_id": kyc.utilisateur_id,
+                "updated_existing": bool(existing),
+                "ocr_complete": bool(
+                    kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
+                ),
+                "biometric_status": kyc.biometric_status,
+                "biometric_score": kyc.biometric_score,
+            },
         )
-    except Exception as e:
-        print(
-            "SUBMIT KYC BIOMETRIC ERROR =>",
-            str(e)
-        )
 
-    create_log(
+        Notification.objects.create(
 
-        user,
+            utilisateur=user,
 
-        "SUBMIT_KYC",
+            title="KYC soumis",
 
-        f"kyc_id={kyc.id}",
-        entity_type="KYC",
-        entity_id=kyc.id,
-        target_repr=kyc.utilisateur.email,
-        metadata={
-            "status": "PENDING",
-            "user_id": kyc.utilisateur_id,
-            "updated_existing": bool(existing),
-            "ocr_complete": bool(
-                kyc.nni or kyc.prenom or kyc.nom_famille or kyc.date_naissance
+            message=(
+                "Votre demande KYC est en attente"
+                if not existing
+                else "Votre demande KYC en attente a ete mise a jour"
             ),
-            "biometric_status": kyc.biometric_status,
-            "biometric_score": kyc.biometric_score,
-        },
-    )
 
-    Notification.objects.create(
+            type="info"
+        )
 
-        utilisateur=user,
-
-        title="KYC soumis",
-
-        message=(
-            "Votre demande KYC est en attente"
-            if not existing
-            else "Votre demande KYC en attente a ete mise a jour"
-        ),
-
-        type="info"
-    )
-
-    _notify_admins_about_kyc(
-        kyc,
-        (
-            f"Nouvelle demande KYC envoyee par {user.nom}"
-            if not existing
-            else f"Demande KYC mise a jour par {user.nom}"
-        ),
-    )
-
-    return Response({
-
-        "message":
-        "KYC soumis"
-        if not existing
-        else "KYC mis a jour",
-        "kyc": KYCRequestSerializer(
+        _notify_admins_about_kyc(
             kyc,
-            context={"request": request}
-        ).data
+            (
+                f"Nouvelle demande KYC envoyee par {user.nom}"
+                if not existing
+                else f"Demande KYC mise a jour par {user.nom}"
+            ),
+        )
 
-    })
+        return Response({
+
+            "message":
+            "KYC soumis"
+            if not existing
+            else "KYC mis a jour",
+            "kyc": KYCRequestSerializer(
+                kyc,
+                context={"request": request}
+            ).data
+
+        })
+    except Exception as e:
+        print(
+            "SUBMIT KYC FATAL ERROR =>",
+            str(e)
+        )
+        return Response(
+            {
+                "error": f"Echec lors de l'envoi du KYC: {str(e)}"
+            },
+            status=500
+        )
 
 
 # ==========================
