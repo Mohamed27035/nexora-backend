@@ -533,7 +533,17 @@ def delete_user(request, id):
         return error
 
     if user.id == current_user.id:
-        return _error("Vous ne pouvez pas supprimer votre propre compte.", 400)
+        return _error("Vous ne pouvez pas supprimer votre propre compte.", 409)
+
+    if is_admin(user):
+        admin_count = Utilisateur.objects.filter(
+            role__in=["ADMIN", "ADMINISTRATEUR"]
+        ).count()
+        if admin_count <= 1:
+            return _error(
+                "Impossible de supprimer le dernier administrateur de la plateforme.",
+                409,
+            )
 
     user.delete()
     create_log(
