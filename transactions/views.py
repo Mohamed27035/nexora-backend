@@ -337,18 +337,27 @@ def get_transactions(request):
         transactions = transactions.filter(created_at__date__lte=end)
 
     if search:
+        normalized_phone = "".join(ch for ch in search if ch.isdigit())
         search_query = (
             Q(sender__nom__icontains=search)
             | Q(sender__prenom__icontains=search)
             | Q(sender__email__icontains=search)
+            | Q(sender__telephone__icontains=search)
             | Q(receiver__nom__icontains=search)
             | Q(receiver__prenom__icontains=search)
             | Q(receiver__email__icontains=search)
+            | Q(receiver__telephone__icontains=search)
             | Q(type__icontains=search)
             | Q(status__icontains=search)
             | Q(note__icontains=search)
             | Q(validation_note__icontains=search)
         )
+
+        if normalized_phone:
+            search_query |= (
+                Q(sender__telephone__icontains=normalized_phone)
+                | Q(receiver__telephone__icontains=normalized_phone)
+            )
 
         if search.isdigit():
             search_query |= Q(id=int(search))
