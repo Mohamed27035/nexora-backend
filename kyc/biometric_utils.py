@@ -6,6 +6,7 @@ from pathlib import Path
 
 import requests
 from django.conf import settings
+from PIL import Image, ImageOps, ImageFilter
 
 
 SELFIE_MATCH_THRESHOLD = 50.0
@@ -120,6 +121,115 @@ def _call_face_endpoint(endpoint_path, file_path, data):
         payload = response.text
 
     return _coerce_payload(payload)
+
+
+def _build_image_variant(original_path, suffix, transform):
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".jpg",
+        prefix=f"kyc-{suffix}-",
+    )
+    temp_path = temp_file.name
+    temp_file.close()
+
+    with Image.open(original_path) as source:
+        image = source.convert("RGB")
+        variant = transform(image)
+        variant.save(temp_path, format="JPEG", quality=92)
+
+    return temp_path
+
+
+def _selfie_variants(image_path):
+    created_paths = []
+
+    def _register(path):
+        if path != image_path:
+            created_paths.append(path)
+        return path
+
+    try:
+        original = Image.open(image_path)
+        width, height = original.size
+        original.close()
+    except Exception:
+        return [image_path], created_paths
+
+    variants = [image_path]
+
+    try:
+        variants.append(
+            _register(
+                _build_image_variant(
+                    image_path,
+                    "selfie-fit",
+                    lambda img: ImageOps.contain(img, (900, 1200)),
+                )
+            )
+        )
+    except Exception:
+        pass
+
+    try:
+        variants.append(
+            _register(
+                _build_image_variant(
+                    image_path,
+                    "selfie-enhanced",
+                    lambda img: ImageOps.autocontrast(
+                        ImageOps.exif_transpose(img)
+                    ).filter(ImageFilter.SHARPEN),
+                )
+            )
+        )
+    except Exception:
+        pass
+
+    try:
+        crop_left = int(width * 0.15)
+        crop_top = int(height * 0.08)
+        crop_right = int(width * 0.85)
+        crop_bottom = int(height * 0.78)
+        if crop_right > crop_left and crop_bottom > crop_top:
+            variants.append(
+                _register(
+                    _build_image_variant(
+                        image_path,
+                        "selfie-crop",
+                        lambda img: ImageOps.contain(
+                            img.crop((crop_left, crop_top, crop_right, crop_bottom)),
+                            (900, 1200),
+                        ),
+                    )
+                )
+            )
+    except Exception:
+        pass
+
+    try:
+        crop_left = int(width * 0.22)
+        crop_top = int(height * 0.05)
+        crop_right = int(width * 0.78)
+        crop_bottom = int(height * 0.62)
+        if crop_right > crop_left and crop_bottom > crop_top:
+            variants.append(
+                _register(
+                    _build_image_variant(
+                        image_path,
+                        "selfie-tight",
+                        lambda img: ImageOps.autocontrast(
+                            ImageOps.contain(
+                                img.crop((crop_left, crop_top, crop_right, crop_bottom)),
+                                (900, 1200),
+                            )
+                        ).filter(ImageFilter.SHARPEN),
+                    )
+                )
+            )
+    except Exception:
+        pass
+
+    return variants, created_paths
 
 
 def _read_first(payload, *keys):
@@ -310,6 +420,41 @@ def verify_face(user_id, image_path):
     }
 
 
+def _verify_face_with_retries(user_id, image_path):
+    attempts, temp_paths = _selfie_variants(image_path)
+    last_error = None
+
+    try:
+        for candidate_path in attempts:
+            try:
+                result = verify_face(user_id=user_id, image_path=candidate_path)
+                face_detected = _payload_face_detected(
+                    result.get("raw_payload"),
+                    message=result.get("message", ""),
+                    score=_normalize_percent(result.get("score")),
+                )
+                if face_detected is False:
+                    last_error = RuntimeError("No face detected")
+                    continue
+                return result
+            except Exception as error:
+                last_error = error
+                if "No face detected" in str(error):
+                    continue
+                raise
+    finally:
+        for path in temp_paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("No face detected")
+
+
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
     biometric_subject = _build_biometric_subject(user_id, id_document_path)
     enrollment_image_path = _extract_enrollment_image_from_id_document(id_document_path)
@@ -341,7 +486,7 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
             raise
 
     try:
-        verified = verify_face(
+        verified = _verify_face_with_retries(
             user_id=biometric_subject,
             image_path=selfie_path,
         )
