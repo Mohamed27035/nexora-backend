@@ -355,6 +355,20 @@ def _detect(value):
     return threats
 
 
+def _detect_path(value):
+    if not isinstance(value, str):
+        return []
+
+    threats = []
+    # We intentionally do not run SQL keyword detection on REST paths
+    # such as /users/delete/12/, otherwise normal routes get blocked.
+    if XSS_RE.search(value):
+        threats.append("XSS")
+    if TRAVERSAL_RE.search(value):
+        threats.append("PATH_TRAVERSAL")
+    return threats
+
+
 def _scan_request(request):
     threats = []
     try:
@@ -374,7 +388,7 @@ def _scan_request(request):
             except Exception:
                 pass
 
-        threats += _detect(request.path)
+        threats += _detect_path(request.path)
     except Exception:
         pass
 
