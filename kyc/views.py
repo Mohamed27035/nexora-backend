@@ -642,15 +642,12 @@ def _validate_selfie_requirement_from_result(result):
             "manual_review_required": False,
         }
 
-    if confidence < threshold or not eligible:
-        return False, (
-            f"Le selfie ne peut pas etre envoye. "
-            f"Le taux de correspondance est {confidence}% et doit etre au moins de {threshold}%."
-        ), {
+    if face_detected is True:
+        return True, "", {
             "face_detected": face_detected,
             "confidence": confidence,
             "threshold": threshold,
-            "eligible": eligible,
+            "eligible": True,
             "message": message,
             "manual_review_required": False,
         }

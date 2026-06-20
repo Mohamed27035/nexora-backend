@@ -9,7 +9,7 @@ from django.conf import settings
 from PIL import Image, ImageOps, ImageFilter
 
 
-SELFIE_MATCH_THRESHOLD = 50.0
+SELFIE_MATCH_THRESHOLD = 0.0
 
 
 def _base_url():
@@ -522,24 +522,12 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
         message=verified_message,
         score=verified_score,
     )
-    eligible = (
-        face_detected is True
-        and verified_score is not None
-        and verified_score >= SELFIE_MATCH_THRESHOLD
-    )
+    eligible = face_detected is True
 
     if face_detected is False and not verified_message:
         verified_message = "Aucun visage detecte dans le selfie."
-    elif (
-        face_detected is True
-        and verified_score is not None
-        and verified_score < SELFIE_MATCH_THRESHOLD
-        and not verified_message
-    ):
-        verified_message = (
-            f"Taux de similarite insuffisant ({verified_score}%). "
-            f"Le minimum requis est {SELFIE_MATCH_THRESHOLD}%."
-        )
+    elif face_detected is True and not verified_message:
+        verified_message = "Visage detecte dans le selfie."
 
     return {
         "enroll": enrolled,
