@@ -9,6 +9,7 @@ from .views import (
     send_welcome_otp,
     verify_welcome_otp,
     sso_nova,
+    sso_nova_debug,
     sso_nova_callback,
 )
 
@@ -53,6 +54,11 @@ urlpatterns = [
     path(
         'sso/nova/',
         sso_nova
+    ),
+
+    path(
+        'sso/nova/debug/',
+        sso_nova_debug
     ),
 
     path(

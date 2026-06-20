@@ -5,6 +5,9 @@ import requests
 from django.conf import settings
 
 
+SELFIE_MATCH_THRESHOLD = 50.0
+
+
 def _base_url():
     return (
         getattr(settings, "NOVA_BIOMETRIC_BASE_URL", "").strip()
@@ -141,6 +144,65 @@ def _is_already_enrolled_error(error):
     return "already enrolled" in message or "deja enrol" in message
 
 
+def _normalize_percent(score_value):
+    if score_value in [None, ""]:
+        return None
+    try:
+        score = float(score_value)
+    except Exception:
+        return None
+    if score <= 1:
+        score *= 100
+    return max(0.0, min(100.0, round(score, 2)))
+
+
+def _payload_face_detected(payload, message="", score=None):
+    if not isinstance(payload, dict):
+        payload = {}
+
+    explicit = _read_first(
+        payload,
+        "face_detected",
+        "detected",
+        "has_face",
+        "face_found",
+        "person_detected",
+    )
+    if isinstance(explicit, bool):
+        return explicit
+    if explicit is not None:
+        normalized = str(explicit).strip().lower()
+        if normalized in {"true", "1", "yes", "detected", "found"}:
+            return True
+        if normalized in {"false", "0", "no", "not_detected", "none"}:
+            return False
+
+    count = _read_first(payload, "faces_count", "face_count", "detected_faces")
+    try:
+        if count is not None:
+            return int(count) > 0
+    except Exception:
+        pass
+
+    normalized_message = str(message or "").strip().lower()
+    if any(
+        token in normalized_message
+        for token in [
+            "no face",
+            "face not detected",
+            "visage non detecte",
+            "aucun visage",
+            "no person",
+        ]
+    ):
+        return False
+
+    if score is not None:
+        return score > 0
+
+    return None
+
+
 def _payload_indicates_match(payload):
     explicit = _read_first(
         payload,
@@ -239,15 +301,53 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
         image_path=selfie_path,
     )
 
+    verified_score = _normalize_percent(verified.get("score"))
+    if verified_score is None and verified.get("success") is True:
+        verified_score = 100.0
+
+    verified_message = verified.get("message") or ""
+    face_detected = _payload_face_detected(
+        verified.get("raw_payload"),
+        message=verified_message,
+        score=verified_score,
+    )
+    eligible = (
+        face_detected is True
+        and verified_score is not None
+        and verified_score >= SELFIE_MATCH_THRESHOLD
+    )
+
+    if face_detected is False and not verified_message:
+        verified_message = "Aucun visage detecte dans le selfie."
+    elif (
+        face_detected is True
+        and verified_score is not None
+        and verified_score < SELFIE_MATCH_THRESHOLD
+        and not verified_message
+    ):
+        verified_message = (
+            f"Taux de similarite insuffisant ({verified_score}%). "
+            f"Le minimum requis est {SELFIE_MATCH_THRESHOLD}%."
+        )
+
     return {
         "enroll": enrolled,
         "verify": verified,
-        "status": "VERIFIED" if verified["success"] else "FAILED",
-        "score": verified.get("score"),
-        "message": verified.get("message") or enrolled.get("message") or "",
+        "status": "VERIFIED" if eligible else "FAILED",
+        "score": verified_score,
+        "face_detected": face_detected,
+        "eligible": eligible,
+        "threshold": SELFIE_MATCH_THRESHOLD,
+        "message": verified_message or enrolled.get("message") or "",
         "reference": verified.get("reference") or enrolled.get("reference") or "",
         "raw_payload": {
             "enroll": enrolled.get("raw_payload"),
             "verify": verified.get("raw_payload"),
+            "assessment": {
+                "face_detected": face_detected,
+                "eligible": eligible,
+                "threshold": SELFIE_MATCH_THRESHOLD,
+                "score": verified_score,
+            },
         },
     }

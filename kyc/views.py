@@ -3,6 +3,8 @@ from rest_framework.response import Response
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from django.db.models import Q
+import os
+import tempfile
 from .models import KYCRequest
 from .serializers import KYCRequestSerializer
 from io import BytesIO
@@ -32,6 +34,17 @@ def _notify_admins_about_kyc(kyc, message):
             )
     except Exception as e:
         print("ADMIN KYC NOTIFICATION ERROR =>", str(e))
+
+
+def _save_temp_upload(uploaded_file, prefix):
+    suffix = Path(getattr(uploaded_file, "name", "")).suffix or ".jpg"
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix=prefix)
+    try:
+        for chunk in uploaded_file.chunks():
+            temp_file.write(chunk)
+    finally:
+        temp_file.close()
+    return temp_file.name
 
 
 def _run_biometric_verification(kyc):
@@ -102,6 +115,114 @@ def _run_biometric_verification(kyc):
             "biometric_raw",
         ]
     )
+
+
+def _validate_selfie_requirement_from_result(result):
+    face_detected = result.get("face_detected")
+    confidence = result.get("score")
+    threshold = result.get("threshold", 50.0)
+    eligible = bool(result.get("eligible"))
+    message = str(result.get("message", "") or "").strip()
+
+    if face_detected is False:
+        return False, "Aucun visage humain n'a ete detecte dans le selfie.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+        }
+
+    if confidence is None:
+        return False, "La comparaison biométrique n'a pas pu calculer un score fiable.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+        }
+
+    if confidence < threshold or not eligible:
+        return False, (
+            f"Le selfie ne peut pas etre envoye. "
+            f"Le taux de correspondance est {confidence}% et doit etre au moins de {threshold}%."
+        ), {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+        }
+
+    return True, "", {
+        "face_detected": face_detected,
+        "confidence": confidence,
+        "threshold": threshold,
+        "eligible": eligible,
+        "message": message,
+    }
+
+
+@api_view(['POST'])
+def check_selfie(request):
+    user, error = get_current_user(request)
+    if error:
+        return error
+
+    id_document = request.FILES.get("id_document")
+    selfie = request.FILES.get("selfie")
+
+    if not id_document or not selfie:
+        return Response(
+            {"error": "Le document d'identite et le selfie sont requis."},
+            status=400,
+        )
+
+    id_document_path = None
+    selfie_path = None
+    try:
+        id_document_path = _save_temp_upload(id_document, "kyc-id-")
+        selfie_path = _save_temp_upload(selfie, "kyc-selfie-")
+
+        from .biometric_utils import (
+            biometric_is_configured,
+            perform_selfie_verification,
+        )
+
+        if not biometric_is_configured():
+            return Response(
+                {"error": "Service biometrique non configure."},
+                status=503,
+            )
+
+        result = perform_selfie_verification(
+            user_id=user.id,
+            id_document_path=id_document_path,
+            selfie_path=selfie_path,
+            device_id="nexora-kyc-precheck",
+        )
+        allowed, reason, summary = _validate_selfie_requirement_from_result(result)
+        return Response(
+            {
+                "allowed": allowed,
+                "reason": reason or result.get("message", ""),
+                "biometric": result,
+                "summary": summary,
+            }
+        )
+    except Exception as e:
+        print("CHECK SELFIE ERROR =>", str(e))
+        return Response(
+            {"error": f"Echec de verification du selfie: {str(e)}"},
+            status=500,
+        )
+    finally:
+        for path in [id_document_path, selfie_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
 
 
 def _normalize_uploaded_image(instance, field_name, target_name):
@@ -536,6 +657,44 @@ def submit_kyc(request):
             print(
                 "SUBMIT KYC BIOMETRIC ERROR =>",
                 str(e)
+            )
+
+        allowed, reason, _summary = _validate_selfie_requirement_from_result(
+            {
+                "face_detected": (
+                    (kyc.biometric_raw or {}).get("assessment", {}).get("face_detected")
+                    if isinstance(kyc.biometric_raw, dict)
+                    else None
+                ),
+                "score": kyc.biometric_score,
+                "threshold": (
+                    (kyc.biometric_raw or {}).get("assessment", {}).get("threshold", 50.0)
+                    if isinstance(kyc.biometric_raw, dict)
+                    else 50.0
+                ),
+                "eligible": (
+                    (kyc.biometric_raw or {}).get("assessment", {}).get("eligible")
+                    if isinstance(kyc.biometric_raw, dict)
+                    else False
+                ),
+                "message": kyc.biometric_message or "",
+            }
+        )
+
+        if not allowed:
+            if not existing:
+                kyc.delete()
+            else:
+                kyc.review_note = reason
+                kyc.save(update_fields=["review_note"])
+            return Response(
+                {
+                    "error": reason,
+                    "biometric_status": kyc.biometric_status,
+                    "biometric_score": kyc.biometric_score,
+                    "biometric_message": kyc.biometric_message,
+                },
+                status=400,
             )
 
         create_log(

@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
 
     submit_kyc,
+    check_selfie,
 
     get_my_kyc,
 
@@ -30,6 +31,12 @@ urlpatterns = [
     # ==========================
     # MY KYC
     # ==========================
+    path(
+        "check-selfie/",
+        check_selfie,
+        name="check_selfie"
+    ),
+
     path(
 
         "my/",

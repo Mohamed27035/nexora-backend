@@ -212,6 +212,13 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         return missing
 
     def get_face_confidence(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            score = self._normalize_score(assessment.get("score"))
+            if score is not None:
+                return score
+
         score = self._normalize_score(obj.biometric_score)
         if score is not None:
             return score
@@ -223,6 +230,11 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         return None
 
     def get_face_detected(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict) and assessment.get("face_detected") is not None:
+            return bool(assessment.get("face_detected"))
+
         if obj.biometric_status == "VERIFIED":
             return True
 
@@ -239,10 +251,14 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         return False
 
     def get_biometric_summary(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
         return {
             "status": obj.biometric_status,
             "confidence": self.get_face_confidence(obj),
             "face_detected": self.get_face_detected(obj),
             "message": obj.biometric_message or "",
             "reference": obj.biometric_reference or "",
+            "eligible": bool(assessment.get("eligible")) if isinstance(assessment, dict) else False,
+            "threshold": assessment.get("threshold") if isinstance(assessment, dict) else 50.0,
         }

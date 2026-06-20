@@ -116,6 +116,19 @@ def _nova_required_config_flags():
     }
 
 
+def _mask_secret(value):
+
+    secret = str(value or "").strip()
+
+    if not secret:
+        return ""
+
+    if len(secret) <= 8:
+        return "*" * len(secret)
+
+    return f"{secret[:4]}...{secret[-4:]}"
+
+
 def _cleanup_nova_pkce_store():
 
     now = time.time()
@@ -1287,6 +1300,54 @@ def sso_nova(request):
             },
             status=500,
         )
+
+
+@api_view(['GET'])
+def sso_nova_debug(request):
+
+    configured = _nova_sso_is_configured()
+    authorization_url = ""
+    state = ""
+
+    if configured:
+        try:
+            authorization_url, state = _build_nova_authorization_url()
+        except Exception as error:
+            return Response(
+                {
+                    "configured": configured,
+                    "required_config": _nova_required_config_flags(),
+                    "error": f"Impossible de construire l'URL Nova SSO: {error}",
+                    "client_id": getattr(settings, "NOVA_SSO_CLIENT_ID", ""),
+                    "redirect_uri": getattr(settings, "NOVA_SSO_REDIRECT_URI", ""),
+                    "authorize_url": getattr(settings, "NOVA_SSO_AUTHORIZE_URL", ""),
+                    "token_url": getattr(settings, "NOVA_SSO_TOKEN_URL", ""),
+                    "userinfo_url": getattr(settings, "NOVA_SSO_USERINFO_URL", ""),
+                    "client_secret_masked": _mask_secret(
+                        getattr(settings, "NOVA_SSO_CLIENT_SECRET", "")
+                    ),
+                },
+                status=500,
+            )
+
+    return Response(
+        {
+            "configured": configured,
+            "required_config": _nova_required_config_flags(),
+            "enabled": bool(getattr(settings, "NOVA_SSO_ENABLED", False)),
+            "client_id": getattr(settings, "NOVA_SSO_CLIENT_ID", ""),
+            "redirect_uri": getattr(settings, "NOVA_SSO_REDIRECT_URI", ""),
+            "authorize_url": getattr(settings, "NOVA_SSO_AUTHORIZE_URL", ""),
+            "token_url": getattr(settings, "NOVA_SSO_TOKEN_URL", ""),
+            "userinfo_url": getattr(settings, "NOVA_SSO_USERINFO_URL", ""),
+            "client_secret_masked": _mask_secret(
+                getattr(settings, "NOVA_SSO_CLIENT_SECRET", "")
+            ),
+            "authorization_url": authorization_url,
+            "state_preview": state[:8] if state else "",
+            "scope": NOVA_SSO_SCOPE,
+        }
+    )
 
 
 @api_view(['GET'])
