@@ -1,6 +1,8 @@
 import json
 import re
 import unicodedata
+import base64
+import binascii
 from pathlib import Path
 
 import pytesseract
@@ -104,6 +106,19 @@ EXTERNAL_FIELD_CANDIDATES = {
     ],
 }
 
+EXTERNAL_FACE_CANDIDATES = [
+    "face_base64",
+    "face_b64",
+    "face_image",
+    "face_crop",
+    "cropped_face",
+    "cropped_face_base64",
+    "portrait_base64",
+    "portrait",
+    "photo_base64",
+    "photo_crop",
+]
+
 
 def _strip_accents(value):
     normalized = unicodedata.normalize("NFKD", value)
@@ -171,6 +186,26 @@ def _extract_from_payload(payload, keys):
                 if isinstance(value, (dict, list)):
                     continue
                 return _cleanup_value(value)
+    return ""
+
+
+def _extract_face_base64(payload):
+    normalized_keys = {str(key).lower() for key in EXTERNAL_FACE_CANDIDATES}
+
+    for node in _walk_payload(payload):
+        if not isinstance(node, dict):
+            continue
+        for key, value in node.items():
+            if str(key).lower() not in normalized_keys:
+                continue
+            if not isinstance(value, str):
+                continue
+            candidate = value.strip()
+            if candidate.startswith("data:image"):
+                return candidate
+            compact = candidate.replace("\n", "").replace("\r", "").strip()
+            if len(compact) > 100:
+                return compact
     return ""
 
 
@@ -264,8 +299,28 @@ def parse_external_ocr_payload(payload):
     return {
         "ocr_text": raw_text,
         "fields": data,
+        "face_base64": _extract_face_base64(source),
         "raw_payload": source,
     }
+
+
+def decode_external_face_image(payload):
+    source = _coerce_external_payload(payload)
+    encoded = _extract_face_base64(source)
+    if not encoded:
+        return None
+
+    if encoded.startswith("data:image"):
+        try:
+            encoded = encoded.split(",", 1)[1]
+        except Exception:
+            return None
+
+    normalized = encoded.strip().replace("\n", "").replace("\r", "")
+    try:
+        return base64.b64decode(normalized, validate=False)
+    except (ValueError, binascii.Error):
+        return None
 
 
 def _looks_like_label(normalized_line):

@@ -1,4 +1,7 @@
 import json
+import hashlib
+import os
+import tempfile
 from pathlib import Path
 
 import requests
@@ -51,6 +54,38 @@ def _coerce_payload(raw_payload):
             return {"message": stripped}
 
     return {"payload": raw_payload}
+
+
+def _build_biometric_subject(user_id, id_document_path):
+    hasher = hashlib.sha256()
+    with open(id_document_path, "rb") as image_file:
+        for chunk in iter(lambda: image_file.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()[:16]
+    return f"{user_id}-{digest}"
+
+
+def _extract_enrollment_image_from_id_document(id_document_path):
+    try:
+        from .ocr_utils import call_external_ocr_api, decode_external_face_image
+
+        payload = call_external_ocr_api(id_document_path)
+        face_bytes = decode_external_face_image(payload)
+        if not face_bytes:
+            return None
+
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".jpg",
+            prefix="kyc-face-",
+        )
+        try:
+            temp_file.write(face_bytes)
+        finally:
+            temp_file.close()
+        return temp_file.name
+    except Exception:
+        return None
 
 
 def _call_face_endpoint(endpoint_path, file_path, data):
@@ -276,10 +311,14 @@ def verify_face(user_id, image_path):
 
 
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
+    biometric_subject = _build_biometric_subject(user_id, id_document_path)
+    enrollment_image_path = _extract_enrollment_image_from_id_document(id_document_path)
+    enroll_source_path = enrollment_image_path or id_document_path
+
     try:
         enrolled = enroll_face(
-            user_id=user_id,
-            image_path=id_document_path,
+            user_id=biometric_subject,
+            image_path=enroll_source_path,
             device_id=device_id,
         )
     except Exception as error:
@@ -288,18 +327,30 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
                 "success": True,
                 "message": "User already enrolled.",
                 "score": None,
-                "reference": str(user_id),
+                "reference": biometric_subject,
                 "raw_payload": {
                     "detail": "User already enrolled",
                 },
             }
         else:
+            if enrollment_image_path and os.path.exists(enrollment_image_path):
+                try:
+                    os.remove(enrollment_image_path)
+                except Exception:
+                    pass
             raise
 
-    verified = verify_face(
-        user_id=user_id,
-        image_path=selfie_path,
-    )
+    try:
+        verified = verify_face(
+            user_id=biometric_subject,
+            image_path=selfie_path,
+        )
+    finally:
+        if enrollment_image_path and os.path.exists(enrollment_image_path):
+            try:
+                os.remove(enrollment_image_path)
+            except Exception:
+                pass
 
     verified_score = _normalize_percent(verified.get("score"))
     if verified_score is None and verified.get("success") is True:
