@@ -584,6 +584,87 @@ def _backfill_ocr_fields_from_text(kyc):
     return True
 
 
+def _validate_selfie_requirement_from_result(result):
+    face_detected = result.get("face_detected")
+    confidence = result.get("score")
+    threshold = result.get("threshold", 50.0)
+    eligible = bool(result.get("eligible"))
+    message = str(result.get("message", "") or "").strip()
+    status = str(result.get("status", "") or "").strip().upper()
+
+    provider_failed = (
+        status == "ERROR"
+        or "no face detected" in message.lower()
+        or "biometric api error" in message.lower()
+    )
+
+    if face_detected is False:
+        if provider_failed:
+            return True, (
+                "Le service biométrique n'a pas détecté le visage automatiquement. "
+                "La demande sera envoyée pour revue manuelle par l'administrateur."
+            ), {
+                "face_detected": face_detected,
+                "confidence": confidence,
+                "threshold": threshold,
+                "eligible": eligible,
+                "message": message,
+                "manual_review_required": True,
+            }
+        return False, "Aucun visage humain n'a ete detecte dans le selfie.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "manual_review_required": False,
+        }
+
+    if confidence is None:
+        if provider_failed:
+            return True, (
+                "Le score biométrique n'a pas pu être calculé automatiquement. "
+                "La demande sera transmise pour revue manuelle."
+            ), {
+                "face_detected": face_detected,
+                "confidence": confidence,
+                "threshold": threshold,
+                "eligible": eligible,
+                "message": message,
+                "manual_review_required": True,
+            }
+        return False, "La comparaison biométrique n'a pas pu calculer un score fiable.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "manual_review_required": False,
+        }
+
+    if confidence < threshold or not eligible:
+        return False, (
+            f"Le selfie ne peut pas etre envoye. "
+            f"Le taux de correspondance est {confidence}% et doit etre au moins de {threshold}%."
+        ), {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "manual_review_required": False,
+        }
+
+    return True, "", {
+        "face_detected": face_detected,
+        "confidence": confidence,
+        "threshold": threshold,
+        "eligible": eligible,
+        "message": message,
+        "manual_review_required": False,
+    }
+
+
 # ==========================
 # SUBMIT KYC
 # ==========================

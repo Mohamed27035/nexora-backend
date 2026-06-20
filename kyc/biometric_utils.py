@@ -486,10 +486,25 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
             raise
 
     try:
-        verified = _verify_face_with_retries(
-            user_id=biometric_subject,
-            image_path=selfie_path,
-        )
+        try:
+            verified = _verify_face_with_retries(
+                user_id=biometric_subject,
+                image_path=selfie_path,
+            )
+        except Exception as error:
+            normalized_error = str(error or "").strip()
+            if "No face detected" in normalized_error:
+                verified = {
+                    "success": False,
+                    "message": "No face detected",
+                    "score": None,
+                    "reference": biometric_subject,
+                    "raw_payload": {
+                        "detail": "No face detected",
+                    },
+                }
+            else:
+                raise
     finally:
         if enrollment_image_path and os.path.exists(enrollment_image_path):
             try:
