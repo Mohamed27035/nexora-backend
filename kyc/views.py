@@ -727,53 +727,20 @@ def submit_kyc(request):
                 str(e)
             )
 
-        try:
-            _run_biometric_verification(
-                kyc
-            )
-        except Exception as e:
-            print(
-                "SUBMIT KYC BIOMETRIC ERROR =>",
-                str(e)
-            )
-
-        allowed, reason, _summary = _validate_selfie_requirement_from_result(
-            {
-                "face_detected": (
-                    (kyc.biometric_raw or {}).get("assessment", {}).get("face_detected")
-                    if isinstance(kyc.biometric_raw, dict)
-                    else None
-                ),
-                "score": kyc.biometric_score,
-                "threshold": (
-                    (kyc.biometric_raw or {}).get("assessment", {}).get("threshold", 50.0)
-                    if isinstance(kyc.biometric_raw, dict)
-                    else 50.0
-                ),
-                "eligible": (
-                    (kyc.biometric_raw or {}).get("assessment", {}).get("eligible")
-                    if isinstance(kyc.biometric_raw, dict)
-                    else False
-                ),
-                "message": kyc.biometric_message or "",
-            }
+        kyc.biometric_status = "SKIPPED"
+        kyc.biometric_score = None
+        kyc.biometric_message = ""
+        kyc.biometric_reference = ""
+        kyc.biometric_raw = None
+        kyc.save(
+            update_fields=[
+                "biometric_status",
+                "biometric_score",
+                "biometric_message",
+                "biometric_reference",
+                "biometric_raw",
+            ]
         )
-
-        if not allowed:
-            if not existing:
-                kyc.delete()
-            else:
-                kyc.review_note = reason
-                kyc.save(update_fields=["review_note"])
-            return Response(
-                {
-                    "error": reason,
-                    "biometric_status": kyc.biometric_status,
-                    "biometric_score": kyc.biometric_score,
-                    "biometric_message": kyc.biometric_message,
-                },
-                status=400,
-            )
 
         create_log(
 
