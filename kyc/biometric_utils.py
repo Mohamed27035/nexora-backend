@@ -136,6 +136,11 @@ def _read_message(payload):
     return str(value).strip()
 
 
+def _is_already_enrolled_error(error):
+    message = str(error or "").strip().lower()
+    return "already enrolled" in message or "deja enrol" in message
+
+
 def _payload_indicates_match(payload):
     explicit = _read_first(
         payload,
@@ -209,11 +214,25 @@ def verify_face(user_id, image_path):
 
 
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
-    enrolled = enroll_face(
-        user_id=user_id,
-        image_path=id_document_path,
-        device_id=device_id,
-    )
+    try:
+        enrolled = enroll_face(
+            user_id=user_id,
+            image_path=id_document_path,
+            device_id=device_id,
+        )
+    except Exception as error:
+        if _is_already_enrolled_error(error):
+            enrolled = {
+                "success": True,
+                "message": "User already enrolled.",
+                "score": None,
+                "reference": str(user_id),
+                "raw_payload": {
+                    "detail": "User already enrolled",
+                },
+            }
+        else:
+            raise
 
     verified = verify_face(
         user_id=user_id,
