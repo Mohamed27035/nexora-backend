@@ -9,8 +9,13 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     sender_full_name = serializers.SerializerMethodField()
+    sender_display = serializers.SerializerMethodField()
     sender_email = serializers.CharField(
         source="sender.email",
+        read_only=True,
+    )
+    sender_phone = serializers.CharField(
+        source="sender.telephone",
         read_only=True,
     )
     receiver_name = serializers.CharField(
@@ -18,8 +23,13 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     receiver_full_name = serializers.SerializerMethodField()
+    receiver_display = serializers.SerializerMethodField()
     receiver_email = serializers.CharField(
         source="receiver.email",
+        read_only=True,
+    )
+    receiver_phone = serializers.CharField(
+        source="receiver.telephone",
         read_only=True,
     )
     validated_by_name = serializers.CharField(
@@ -36,11 +46,15 @@ class TransactionSerializer(serializers.ModelSerializer):
             "sender",
             "sender_name",
             "sender_full_name",
+            "sender_display",
             "sender_email",
+            "sender_phone",
             "receiver",
             "receiver_name",
             "receiver_full_name",
+            "receiver_display",
             "receiver_email",
+            "receiver_phone",
             "montant",
             "type",
             "status",
@@ -82,6 +96,26 @@ class TransactionSerializer(serializers.ModelSerializer):
     def get_validated_by_full_name(self, obj):
         return self._full_name(obj.validated_by)
 
+    def _display_identity(self, user):
+        if not user:
+            return "-"
+        full_name = self._full_name(user)
+        phone = (user.telephone or "").strip()
+        email = (user.email or "").strip()
+        if full_name and phone:
+            return f"{full_name} ({phone})"
+        if full_name:
+            return full_name
+        if phone and email:
+            return f"{phone} ({email})"
+        return phone or email or "-"
+
+    def get_sender_display(self, obj):
+        return self._display_identity(obj.sender)
+
+    def get_receiver_display(self, obj):
+        return self._display_identity(obj.receiver)
+
     def get_proof_url(self, obj):
         if not obj.proof:
             return None
@@ -119,4 +153,3 @@ class TransactionSerializer(serializers.ModelSerializer):
             )
 
         return data
-

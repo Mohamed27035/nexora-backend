@@ -307,6 +307,7 @@ def get_transactions(request):
 
     status_filter = str(request.GET.get("status", "ALL")).strip().upper()
     type_filter = _normalize_transaction_type(request.GET.get("type", "ALL"))
+    direction_filter = str(request.GET.get("direction", "ALL")).strip().upper()
     start = request.GET.get("start")
     end = request.GET.get("end")
     search = str(request.GET.get("search", "")).strip()
@@ -330,6 +331,12 @@ def get_transactions(request):
 
     if type_filter != "ALL":
         transactions = transactions.filter(type=type_filter)
+
+    if direction_filter in {"SENT", "RECEIVED"}:
+        if direction_filter == "SENT":
+            transactions = transactions.filter(type="TRANSFER", sender=user)
+        else:
+            transactions = transactions.filter(type="TRANSFER", receiver=user)
 
     if start:
         transactions = transactions.filter(created_at__date__gte=start)
