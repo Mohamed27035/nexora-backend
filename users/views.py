@@ -944,6 +944,12 @@ def change_role(request, id):
             400,
         )
 
+    if is_client(user) and role != "CLIENT" and float(user.balance or 0) > 0:
+        return _error(
+            "Impossible de changer le rôle d'un client qui possède encore un solde. Veuillez vider le portefeuille d'abord.",
+            400,
+        )
+
     previous_role = user.role
     user.role = role
     user.save(update_fields=["role"])
