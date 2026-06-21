@@ -110,6 +110,10 @@ def _find_receiver(data):
     return None
 
 
+def _can_initiate_financial_transaction(user):
+    return getattr(user, "role", "").upper() == "CLIENT"
+
+
 def _apply_transaction_effect(transaction):
     sender = transaction.sender
     receiver = transaction.receiver
@@ -152,6 +156,12 @@ def create_transaction(request):
     if error:
         return error
 
+    if not _can_initiate_financial_transaction(user):
+        return _error(
+            "Seuls les comptes client peuvent initier des operations financieres",
+            403,
+        )
+
     data = request.data.copy()
     data["sender"] = user.id
 
@@ -173,6 +183,8 @@ def create_transaction(request):
         receiver = _find_receiver(data)
         if not receiver:
             return _error("Destinataire introuvable avec ce numéro de téléphone", 404)
+        if getattr(receiver, "role", "").upper() != "CLIENT":
+            return _error("Le destinataire doit etre un compte client", 400)
         if receiver.id == user.id:
             return _error("Impossible de transferer a soi-meme", 400)
         if Decimal(str(user.balance)) < amount:
