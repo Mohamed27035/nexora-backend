@@ -47,3 +47,15 @@ class Utilisateur(models.Model):
 
     def __str__(self):
         return f"{self.nom} {self.prenom or ''}"
+
+
+class EmailVerificationOTP(models.Model):
+
+    email = models.EmailField(unique=True)
+
+    otp_code = models.CharField(max_length=10)
+
+    otp_created_at = models.DateTimeField()
+
+    def __str__(self):
+        return self.email

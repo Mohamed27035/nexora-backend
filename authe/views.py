@@ -15,7 +15,7 @@ import base64
 import hashlib
 import secrets
 
-from users.models import Utilisateur
+from users.models import EmailVerificationOTP, Utilisateur
 
 import requests
 import random
@@ -86,6 +86,48 @@ def _clear_user_otp(user):
             "otp_created_at",
         ]
     )
+
+
+def _set_email_otp(email, otp):
+
+    EmailVerificationOTP.objects.update_or_create(
+        email=email,
+        defaults={
+            "otp_code": otp,
+            "otp_created_at": timezone.now(),
+        }
+    )
+
+
+def _get_email_otp_entry(email):
+
+    return EmailVerificationOTP.objects.filter(
+        email=email
+    ).first()
+
+
+def _is_email_otp_valid(entry, otp):
+
+    if not entry or not entry.otp_code or not entry.otp_created_at:
+        return False, "OTP not found"
+
+    expires_at = entry.otp_created_at + timedelta(
+        minutes=OTP_EXPIRY_MINUTES
+    )
+
+    if timezone.now() > expires_at:
+        return False, "OTP expired"
+
+    if entry.otp_code != otp:
+        return False, "OTP incorrect"
+
+    return True, None
+
+
+def _clear_email_otp(entry):
+
+    if entry:
+        entry.delete()
 
 
 def _nova_sso_is_configured():
@@ -1063,24 +1105,23 @@ def send_welcome_otp(request):
             ""
         ).strip().lower()
 
-        user = Utilisateur.objects.filter(
-            email=email
-        ).first()
-
-        if not user:
+        if not email:
 
             return Response({
 
                 "error":
-                "User not found"
+                "Email is required"
 
-            }, status=404)
+            }, status=400)
 
         otp = _generate_otp()
-        _set_user_otp(
-            user,
+        _set_email_otp(
+            email,
             otp
         )
+        user_exists = Utilisateur.objects.filter(
+            email=email
+        ).exists()
 
         demo_payload = None
 
@@ -1093,6 +1134,9 @@ def send_welcome_otp(request):
 
                 "demo_mode":
                 True,
+
+                "user_exists":
+                user_exists,
 
                 "otp":
                 otp
@@ -1143,7 +1187,10 @@ def send_welcome_otp(request):
         return Response({
 
             "message":
-            "OTP envoyÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
+            "OTP sent",
+
+            "user_exists":
+            user_exists
 
         })
 
@@ -1155,7 +1202,7 @@ def send_welcome_otp(request):
             str(e)
 
         }, status=500)
-    
+
 @api_view(['POST'])
 def verify_welcome_otp(request):
 
@@ -1170,21 +1217,12 @@ def verify_welcome_otp(request):
             "otp"
         )
 
-        user = Utilisateur.objects.filter(
-            email=email
-        ).first()
+        otp_entry = _get_email_otp_entry(
+            email
+        )
 
-        if not user:
-
-            return Response({
-
-                "error":
-                "User not found"
-
-            }, status=404)
-
-        is_valid, validation_error = _is_user_otp_valid(
-            user,
+        is_valid, validation_error = _is_email_otp_valid(
+            otp_entry,
             otp
         )
 
@@ -1197,14 +1235,19 @@ def verify_welcome_otp(request):
 
             }, status=400)
 
-        _clear_user_otp(
-            user
+        _clear_email_otp(
+            otp_entry
         )
 
         return Response({
 
             "message":
-            "OTP verified"
+            "OTP verified",
+
+            "user_exists":
+            Utilisateur.objects.filter(
+                email=email
+            ).exists()
 
         })
 
@@ -1216,7 +1259,6 @@ def verify_welcome_otp(request):
             str(e)
 
         }, status=500)
-
 # ==========================================
 # SSO NOVA (PREPARED PLACEHOLDER)
 # ==========================================
@@ -1398,3 +1440,4 @@ def sso_nova_callback(request):
         content_type="text/html; charset=utf-8",
         status=200,
     )
+
