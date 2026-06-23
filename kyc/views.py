@@ -236,7 +236,7 @@ def _purge_kyc_images(kyc):
 def _validate_selfie_requirement_from_result(result):
     face_detected = result.get("face_detected")
     confidence = result.get("score")
-    threshold = result.get("threshold", 50.0)
+    threshold = result.get("threshold", 70.0)
     eligible = bool(result.get("eligible"))
     message = str(result.get("message", "") or "").strip()
 
