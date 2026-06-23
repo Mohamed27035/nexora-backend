@@ -117,6 +117,116 @@ def _run_biometric_verification(kyc):
     )
 
 
+def _apply_automatic_kyc_decision(kyc):
+    biometric_status = str(kyc.biometric_status or "").strip().upper()
+    biometric_message = str(kyc.biometric_message or "").strip()
+
+    if biometric_status == "VERIFIED":
+        kyc.status = "APPROVED"
+        kyc.reviewed_by = None
+        kyc.reviewed_at = timezone.now()
+        kyc.review_note = (
+            biometric_message
+            or "Verification d'identite approuvee automatiquement."
+        )
+        kyc.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "review_note",
+            ]
+        )
+
+        kyc.utilisateur.is_verified = True
+        kyc.utilisateur.is_suspended = False
+        kyc.utilisateur.save(update_fields=["is_verified", "is_suspended"])
+
+        create_log(
+            kyc.utilisateur,
+            "APPROVE_KYC",
+            f"kyc_id={kyc.id};mode=automatic",
+            entity_type="KYC",
+            entity_id=kyc.id,
+            target_repr=kyc.utilisateur.email,
+            metadata={
+                "status": "APPROVED",
+                "user_id": kyc.utilisateur_id,
+                "automatic": True,
+                "biometric_status": biometric_status,
+                "biometric_score": kyc.biometric_score,
+                "review_note": kyc.review_note,
+            },
+        )
+
+        Notification.objects.create(
+            utilisateur=kyc.utilisateur,
+            title="Identite approuvee",
+            message="Votre identite a ete verifiee automatiquement.",
+            type="success",
+        )
+
+        return "APPROVED"
+
+    if biometric_status in {"FAILED"}:
+        kyc.status = "REJECTED"
+        kyc.reviewed_by = None
+        kyc.reviewed_at = timezone.now()
+        kyc.review_note = (
+            biometric_message
+            or "La verification automatique de l'identite a echoue."
+        )
+        kyc.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "review_note",
+            ]
+        )
+
+        create_log(
+            kyc.utilisateur,
+            "REJECT_KYC",
+            f"kyc_id={kyc.id};mode=automatic",
+            entity_type="KYC",
+            entity_id=kyc.id,
+            target_repr=kyc.utilisateur.email,
+            metadata={
+                "status": "REJECTED",
+                "user_id": kyc.utilisateur_id,
+                "automatic": True,
+                "biometric_status": biometric_status,
+                "biometric_score": kyc.biometric_score,
+                "review_note": kyc.review_note,
+            },
+        )
+
+        Notification.objects.create(
+            utilisateur=kyc.utilisateur,
+            title="Identite refusee",
+            message="La verification automatique de votre identite a echoue.",
+            type="danger",
+        )
+
+        return "REJECTED"
+
+    kyc.status = "PENDING"
+    kyc.reviewed_by = None
+    kyc.reviewed_at = None
+    kyc.review_note = ""
+    kyc.save(
+        update_fields=[
+            "status",
+            "reviewed_by",
+            "reviewed_at",
+            "review_note",
+        ]
+    )
+
+    return "PENDING"
+
+
 def _validate_selfie_requirement_from_result(result):
     face_detected = result.get("face_detected")
     confidence = result.get("score")
@@ -727,20 +837,8 @@ def submit_kyc(request):
                 str(e)
             )
 
-        kyc.biometric_status = "SKIPPED"
-        kyc.biometric_score = None
-        kyc.biometric_message = ""
-        kyc.biometric_reference = ""
-        kyc.biometric_raw = None
-        kyc.save(
-            update_fields=[
-                "biometric_status",
-                "biometric_score",
-                "biometric_message",
-                "biometric_reference",
-                "biometric_raw",
-            ]
-        )
+        _run_biometric_verification(kyc)
+        decision = _apply_automatic_kyc_decision(kyc)
 
         create_log(
 
@@ -753,7 +851,7 @@ def submit_kyc(request):
             entity_id=kyc.id,
             target_repr=kyc.utilisateur.email,
             metadata={
-                "status": "PENDING",
+                "status": kyc.status,
                 "user_id": kyc.utilisateur_id,
                 "updated_existing": bool(existing),
                 "ocr_complete": bool(
@@ -761,39 +859,43 @@ def submit_kyc(request):
                 ),
                 "biometric_status": kyc.biometric_status,
                 "biometric_score": kyc.biometric_score,
+                "automatic_decision": decision,
             },
         )
 
-        Notification.objects.create(
+        if decision == "PENDING":
+            Notification.objects.create(
+                utilisateur=user,
+                title="Verification d'identite envoyee",
+                message=(
+                    "Votre demande est en attente de revue."
+                    if not existing
+                    else "Votre demande en attente a ete mise a jour."
+                ),
+                type="info"
+            )
 
-            utilisateur=user,
-
-            title="KYC soumis",
-
-            message=(
-                "Votre demande KYC est en attente"
-                if not existing
-                else "Votre demande KYC en attente a ete mise a jour"
-            ),
-
-            type="info"
-        )
-
-        _notify_admins_about_kyc(
-            kyc,
-            (
-                f"Nouvelle demande KYC envoyee par {user.nom}"
-                if not existing
-                else f"Demande KYC mise a jour par {user.nom}"
-            ),
-        )
+            _notify_admins_about_kyc(
+                kyc,
+                (
+                    f"Nouvelle demande de verification d'identite envoyee par {user.nom}"
+                    if not existing
+                    else f"Demande de verification d'identite mise a jour par {user.nom}"
+                ),
+            )
 
         return Response({
 
             "message":
-            "KYC soumis"
-            if not existing
-            else "KYC mis a jour",
+            (
+                "Verification d'identite approuvee automatiquement"
+                if decision == "APPROVED"
+                else "Verification d'identite refusee automatiquement"
+                if decision == "REJECTED"
+                else "Verification d'identite envoyee"
+                if not existing
+                else "Verification d'identite mise a jour"
+            ),
             "kyc": KYCRequestSerializer(
                 kyc,
                 context={"request": request}

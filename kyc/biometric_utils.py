@@ -9,7 +9,7 @@ from django.conf import settings
 from PIL import Image, ImageOps, ImageFilter
 
 
-SELFIE_MATCH_THRESHOLD = 0.0
+SELFIE_MATCH_THRESHOLD = 50.0
 
 
 def _base_url():
@@ -107,6 +107,51 @@ def _call_face_endpoint(endpoint_path, file_path, data):
                     "image/jpeg",
                 )
             },
+            timeout=_timeout(),
+        )
+
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Biometric API error ({response.status_code}): {response.text[:500]}"
+        )
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = response.text
+
+    return _coerce_payload(payload)
+
+
+def _guess_mime_type(file_path):
+    suffix = Path(file_path).suffix.lower()
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _call_kyc_verify_endpoint(id_document_path, selfie_path):
+    endpoint = f"{_base_url().rstrip('/')}/kyc/verify"
+
+    with open(id_document_path, "rb") as id_image, open(selfie_path, "rb") as selfie_image:
+        files = [
+            ("id_card", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
+            ("id_document", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
+            ("document", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
+            ("selfie", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
+            ("selfie_image", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
+            ("face_image", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
+        ]
+
+        response = requests.post(
+            endpoint,
+            headers={
+                "Accept": "application/json",
+                "Secure-Nova-Key": _api_key(),
+            },
+            files=files,
             timeout=_timeout(),
         )
 
@@ -456,97 +501,52 @@ def _verify_face_with_retries(user_id, image_path):
 
 
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
-    biometric_subject = _build_biometric_subject(user_id, id_document_path)
-    enrollment_image_path = _extract_enrollment_image_from_id_document(id_document_path)
-    enroll_source_path = enrollment_image_path or id_document_path
+    payload = _call_kyc_verify_endpoint(id_document_path, selfie_path)
 
-    try:
-        enrolled = enroll_face(
-            user_id=biometric_subject,
-            image_path=enroll_source_path,
-            device_id=device_id,
-        )
-    except Exception as error:
-        if _is_already_enrolled_error(error):
-            enrolled = {
-                "success": True,
-                "message": "User already enrolled.",
-                "score": None,
-                "reference": biometric_subject,
-                "raw_payload": {
-                    "detail": "User already enrolled",
-                },
-            }
-        else:
-            if enrollment_image_path and os.path.exists(enrollment_image_path):
-                try:
-                    os.remove(enrollment_image_path)
-                except Exception:
-                    pass
-            raise
-
-    try:
-        try:
-            verified = _verify_face_with_retries(
-                user_id=biometric_subject,
-                image_path=selfie_path,
-            )
-        except Exception as error:
-            normalized_error = str(error or "").strip()
-            if "No face detected" in normalized_error:
-                verified = {
-                    "success": False,
-                    "message": "No face detected",
-                    "score": None,
-                    "reference": biometric_subject,
-                    "raw_payload": {
-                        "detail": "No face detected",
-                    },
-                }
-            else:
-                raise
-    finally:
-        if enrollment_image_path and os.path.exists(enrollment_image_path):
-            try:
-                os.remove(enrollment_image_path)
-            except Exception:
-                pass
-
-    verified_score = _normalize_percent(verified.get("score"))
-    if verified_score is None and verified.get("success") is True:
-        verified_score = 100.0
-
-    verified_message = verified.get("message") or ""
+    verified_score = _normalize_percent(_read_score(payload))
+    verified_message = _read_message(payload) or ""
     face_detected = _payload_face_detected(
-        verified.get("raw_payload"),
+        payload,
         message=verified_message,
         score=verified_score,
     )
-    eligible = face_detected is True
+    explicit_match = _payload_indicates_match(payload)
+
+    eligible = bool(
+        face_detected is not False
+        and (
+            explicit_match is True
+            or (
+                verified_score is not None
+                and verified_score >= SELFIE_MATCH_THRESHOLD
+            )
+        )
+    )
 
     if face_detected is False and not verified_message:
         verified_message = "Aucun visage detecte dans le selfie."
-    elif face_detected is True and not verified_message:
-        verified_message = "Visage detecte dans le selfie."
+    elif eligible and not verified_message:
+        verified_message = "Verification d'identite automatique reussie."
+    elif not eligible and not verified_message:
+        verified_message = "La verification automatique de l'identite a echoue."
 
     return {
-        "enroll": enrolled,
-        "verify": verified,
+        "provider": "nova_kyc_verify",
         "status": "VERIFIED" if eligible else "FAILED",
         "score": verified_score,
         "face_detected": face_detected,
         "eligible": eligible,
         "threshold": SELFIE_MATCH_THRESHOLD,
-        "message": verified_message or enrolled.get("message") or "",
-        "reference": verified.get("reference") or enrolled.get("reference") or "",
+        "message": verified_message,
+        "reference": _read_reference(payload),
         "raw_payload": {
-            "enroll": enrolled.get("raw_payload"),
-            "verify": verified.get("raw_payload"),
+            "verify": payload,
             "assessment": {
                 "face_detected": face_detected,
                 "eligible": eligible,
                 "threshold": SELFIE_MATCH_THRESHOLD,
                 "score": verified_score,
+                "matched": explicit_match,
             },
         },
     }
