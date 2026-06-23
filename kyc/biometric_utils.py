@@ -9,7 +9,7 @@ from django.conf import settings
 from PIL import Image, ImageOps, ImageFilter
 
 
-SELFIE_MATCH_THRESHOLD = 50.0
+SELFIE_MATCH_THRESHOLD = 70.0
 
 
 def _base_url():
@@ -136,14 +136,18 @@ def _call_kyc_verify_endpoint(id_document_path, selfie_path):
     endpoint = f"{_base_url().rstrip('/')}/kyc/verify"
 
     with open(id_document_path, "rb") as id_image, open(selfie_path, "rb") as selfie_image:
-        files = [
-            ("id_card", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
-            ("id_document", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
-            ("document", (Path(id_document_path).name, id_image, _guess_mime_type(id_document_path))),
-            ("selfie", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
-            ("selfie_image", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
-            ("face_image", (Path(selfie_path).name, selfie_image, _guess_mime_type(selfie_path))),
-        ]
+        files = {
+            "image1": (
+                Path(id_document_path).name,
+                id_image,
+                _guess_mime_type(id_document_path),
+            ),
+            "image2": (
+                Path(selfie_path).name,
+                selfie_image,
+                _guess_mime_type(selfie_path),
+            ),
+        }
 
         response = requests.post(
             endpoint,
@@ -513,7 +517,7 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
     explicit_match = _payload_indicates_match(payload)
 
     eligible = bool(
-        face_detected is not False
+        face_detected is True
         and (
             explicit_match is True
             or (

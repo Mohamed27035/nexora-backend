@@ -168,13 +168,13 @@ def _apply_automatic_kyc_decision(kyc):
 
         return "APPROVED"
 
-    if biometric_status in {"FAILED"}:
+    if biometric_status in {"FAILED", "ERROR", "SKIPPED", "PENDING"}:
         kyc.status = "REJECTED"
         kyc.reviewed_by = None
         kyc.reviewed_at = timezone.now()
         kyc.review_note = (
             biometric_message
-            or "La verification automatique de l'identite a echoue."
+            or "La verification automatique de l'identite a echoue ou n'a pas pu etre finalisee."
         )
         kyc.save(
             update_fields=[
@@ -210,27 +210,33 @@ def _apply_automatic_kyc_decision(kyc):
         )
 
         return "REJECTED"
+    return "REJECTED"
 
-    kyc.status = "PENDING"
-    kyc.reviewed_by = None
-    kyc.reviewed_at = None
-    kyc.review_note = ""
-    kyc.save(
-        update_fields=[
-            "status",
-            "reviewed_by",
-            "reviewed_at",
-            "review_note",
-        ]
-    )
 
-    return "PENDING"
+def _purge_kyc_images(kyc):
+    for field_name in ["id_document", "selfie"]:
+        field = getattr(kyc, field_name, None)
+        if not field:
+            continue
+        try:
+            stored_name = field.name
+        except Exception:
+            stored_name = ""
+        try:
+            if stored_name:
+                field.storage.delete(stored_name)
+        except Exception as e:
+            print("KYC IMAGE DELETE ERROR =>", str(e))
+
+    kyc.id_document = ""
+    kyc.selfie = ""
+    kyc.save(update_fields=["id_document", "selfie"])
 
 
 def _validate_selfie_requirement_from_result(result):
     face_detected = result.get("face_detected")
     confidence = result.get("score")
-    threshold = result.get("threshold", 50.0)
+    threshold = result.get("threshold", 70.0)
     eligible = bool(result.get("eligible"))
     message = str(result.get("message", "") or "").strip()
 
@@ -839,6 +845,7 @@ def submit_kyc(request):
 
         _run_biometric_verification(kyc)
         decision = _apply_automatic_kyc_decision(kyc)
+        _purge_kyc_images(kyc)
 
         create_log(
 
@@ -863,27 +870,6 @@ def submit_kyc(request):
             },
         )
 
-        if decision == "PENDING":
-            Notification.objects.create(
-                utilisateur=user,
-                title="Verification d'identite envoyee",
-                message=(
-                    "Votre demande est en attente de revue."
-                    if not existing
-                    else "Votre demande en attente a ete mise a jour."
-                ),
-                type="info"
-            )
-
-            _notify_admins_about_kyc(
-                kyc,
-                (
-                    f"Nouvelle demande de verification d'identite envoyee par {user.nom}"
-                    if not existing
-                    else f"Demande de verification d'identite mise a jour par {user.nom}"
-                ),
-            )
-
         return Response({
 
             "message":
@@ -892,9 +878,7 @@ def submit_kyc(request):
                 if decision == "APPROVED"
                 else "Verification d'identite refusee automatiquement"
                 if decision == "REJECTED"
-                else "Verification d'identite envoyee"
-                if not existing
-                else "Verification d'identite mise a jour"
+                else "Verification d'identite traitee"
             ),
             "kyc": KYCRequestSerializer(
                 kyc,
