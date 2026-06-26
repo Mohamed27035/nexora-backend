@@ -33,6 +33,12 @@ class KYCRequestSerializer(serializers.ModelSerializer):
     ocr_missing_fields = serializers.SerializerMethodField()
     face_detected = serializers.SerializerMethodField()
     face_confidence = serializers.SerializerMethodField()
+    biometric_decision = serializers.SerializerMethodField()
+    similarity_threshold = serializers.SerializerMethodField()
+    liveness_threshold = serializers.SerializerMethodField()
+    liveness_score = serializers.SerializerMethodField()
+    confidence_score = serializers.SerializerMethodField()
+    risk_score = serializers.SerializerMethodField()
     biometric_summary = serializers.SerializerMethodField()
 
     class Meta:
@@ -72,6 +78,12 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "biometric_raw",
             "face_detected",
             "face_confidence",
+            "biometric_decision",
+            "similarity_threshold",
+            "liveness_threshold",
+            "liveness_score",
+            "confidence_score",
+            "risk_score",
             "biometric_summary",
             "ocr_complete",
         ]
@@ -100,6 +112,12 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "ocr_missing_fields",
             "face_detected",
             "face_confidence",
+            "biometric_decision",
+            "similarity_threshold",
+            "liveness_threshold",
+            "liveness_score",
+            "confidence_score",
+            "risk_score",
             "biometric_summary",
             "ocr_complete",
             "ocr_data",
@@ -215,7 +233,9 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         raw = obj.biometric_raw or {}
         assessment = raw.get("assessment") if isinstance(raw, dict) else None
         if isinstance(assessment, dict):
-            score = self._normalize_score(assessment.get("score"))
+            score = self._normalize_score(
+                assessment.get("similarity_score", assessment.get("score"))
+            )
             if score is not None:
                 return score
 
@@ -238,7 +258,7 @@ class KYCRequestSerializer(serializers.ModelSerializer):
         if obj.biometric_status == "VERIFIED":
             return True
 
-        score = self._normalize_score(obj.biometric_score)
+        score = self.get_face_confidence(obj)
         if score is not None:
             return score > 0
 
@@ -250,6 +270,55 @@ class KYCRequestSerializer(serializers.ModelSerializer):
 
         return False
 
+    def get_biometric_decision(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            value = assessment.get("decision")
+            if value not in [None, ""]:
+                return value
+        verify = raw.get("verify") if isinstance(raw, dict) else None
+        if isinstance(verify, dict):
+            value = verify.get("decision")
+            if value not in [None, ""]:
+                return value
+        return ""
+
+    def get_similarity_threshold(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            return self._normalize_score(assessment.get("similarity_threshold", assessment.get("threshold")))
+        return None
+
+    def get_liveness_threshold(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            return self._normalize_score(assessment.get("liveness_threshold"))
+        return None
+
+    def get_liveness_score(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            return self._normalize_score(assessment.get("liveness_score"))
+        return None
+
+    def get_confidence_score(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            return self._normalize_score(assessment.get("confidence_score"))
+        return None
+
+    def get_risk_score(self, obj):
+        raw = obj.biometric_raw or {}
+        assessment = raw.get("assessment") if isinstance(raw, dict) else None
+        if isinstance(assessment, dict):
+            return self._normalize_score(assessment.get("risk_score"))
+        return None
+
     def get_biometric_summary(self, obj):
         raw = obj.biometric_raw or {}
         assessment = raw.get("assessment") if isinstance(raw, dict) else None
@@ -260,5 +329,11 @@ class KYCRequestSerializer(serializers.ModelSerializer):
             "message": obj.biometric_message or "",
             "reference": obj.biometric_reference or "",
             "eligible": bool(assessment.get("eligible")) if isinstance(assessment, dict) else False,
-            "threshold": assessment.get("threshold") if isinstance(assessment, dict) else 50.0,
+            "threshold": self.get_similarity_threshold(obj) or 70.0,
+            "decision": self.get_biometric_decision(obj),
+            "similarity_score": self.get_face_confidence(obj),
+            "liveness_score": self.get_liveness_score(obj),
+            "confidence_score": self.get_confidence_score(obj),
+            "risk_score": self.get_risk_score(obj),
+            "liveness_threshold": self.get_liveness_threshold(obj),
         }

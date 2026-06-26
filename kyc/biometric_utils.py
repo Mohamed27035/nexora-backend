@@ -289,48 +289,88 @@ def _read_first(payload, *keys):
     return None
 
 
-def _read_score(payload):
-    score_value = _read_first(
-        payload,
-        "score",
-        "similarity",
-        "confidence",
-        "match_score",
-        "probability",
-    )
-    if score_value in [None, ""]:
-        return None
+def _read_nested(payload, *path):
+    current = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+        if current in [None, ""]:
+            return None
+    return current
 
+
+def _read_number(value):
+    if value in [None, ""]:
+        return None
     try:
-        return float(score_value)
+        return float(value)
     except Exception:
         return None
 
 
+def _read_similarity_score(payload):
+    return _read_number(_read_nested(payload, "scores", "similarity_score"))
+
+
+def _read_liveness_score(payload):
+    return _read_number(_read_nested(payload, "scores", "liveness_score"))
+
+
+def _read_confidence_score(payload):
+    return _read_number(_read_nested(payload, "scores", "confidence_score"))
+
+
+def _read_risk_score(payload):
+    return _read_number(_read_nested(payload, "scores", "risk_score"))
+
+
+def _read_similarity_threshold(payload):
+    return _read_number(_read_nested(payload, "thresholds", "similarity_threshold"))
+
+
+def _read_liveness_threshold(payload):
+    return _read_number(_read_nested(payload, "thresholds", "liveness_threshold"))
+
+
 def _read_reference(payload):
-    value = _read_first(
-        payload,
-        "reference",
-        "reference_id",
-        "face_id",
-        "embedding_id",
-        "user_id",
+    value = (
+        _read_nested(payload, "audit", "request_id")
+        or _read_nested(payload, "audit", "user_id")
+        or _read_nested(payload, "metadata", "timestamp")
+        or _read_first(payload, "reference", "reference_id")
     )
     return str(value).strip() if value not in [None, ""] else ""
 
 
 def _read_message(payload):
-    value = _read_first(
-        payload,
-        "message",
-        "detail",
-        "status",
-        "result",
-        "description",
-    )
-    if value in [None, ""]:
+    if not isinstance(payload, dict):
         return ""
-    return str(value).strip()
+
+    direct = _read_first(payload, "message", "detail", "description")
+    if direct not in [None, ""]:
+        return str(direct).strip()
+
+    decision = str(_read_first(payload, "decision") or "").strip()
+    status = str(_read_first(payload, "status") or "").strip()
+    factors = _read_nested(payload, "explainability", "decision_factors")
+
+    factor_text = ""
+    if isinstance(factors, list) and factors:
+        descriptions = []
+        for factor in factors[:3]:
+            if isinstance(factor, dict):
+                part = str(
+                    factor.get("description")
+                    or factor.get("factor")
+                    or ""
+                ).strip()
+                if part:
+                    descriptions.append(part)
+        factor_text = " | ".join(descriptions)
+
+    parts = [part for part in [status, decision, factor_text] if part]
+    return " - ".join(parts)
 
 
 def _is_already_enrolled_error(error):
@@ -350,80 +390,47 @@ def _normalize_percent(score_value):
     return max(0.0, min(100.0, round(score, 2)))
 
 
-def _payload_face_detected(payload, message="", score=None):
+def _payload_face_detected(payload, similarity_score=None, liveness_score=None, confidence_score=None):
     if not isinstance(payload, dict):
         payload = {}
 
-    explicit = _read_first(
-        payload,
-        "face_detected",
-        "detected",
-        "has_face",
-        "face_found",
-        "person_detected",
-    )
-    if isinstance(explicit, bool):
-        return explicit
-    if explicit is not None:
-        normalized = str(explicit).strip().lower()
-        if normalized in {"true", "1", "yes", "detected", "found"}:
-            return True
-        if normalized in {"false", "0", "no", "not_detected", "none"}:
-            return False
+    status = str(_read_first(payload, "status") or "").strip().lower()
+    decision = str(_read_first(payload, "decision") or "").strip().lower()
+    message = _read_message(payload).lower()
 
-    count = _read_first(payload, "faces_count", "face_count", "detected_faces")
-    try:
-        if count is not None:
-            return int(count) > 0
-    except Exception:
-        pass
-
-    normalized_message = str(message or "").strip().lower()
     if any(
-        token in normalized_message
-        for token in [
-            "no face",
-            "face not detected",
-            "visage non detecte",
-            "aucun visage",
-            "no person",
-        ]
+        token in " ".join([status, decision, message])
+        for token in ["no face", "face not detected", "aucun visage", "visage non detecte"]
     ):
         return False
 
-    if score is not None:
-        return score > 0
+    if any(value is not None for value in [similarity_score, liveness_score, confidence_score]):
+        return True
 
     return None
 
 
-def _payload_indicates_match(payload):
-    explicit = _read_first(
-        payload,
-        "match",
-        "matched",
-        "verified",
-        "success",
-        "is_match",
-    )
+def _payload_indicates_match(payload, similarity_score=None, threshold=None):
+    if not isinstance(payload, dict):
+        payload = {}
 
-    if isinstance(explicit, bool):
-        return explicit
+    decision = str(_read_first(payload, "decision") or "").strip().lower()
+    status = str(_read_first(payload, "status") or "").strip().lower()
 
-    if explicit is not None:
-        normalized = str(explicit).strip().lower()
-        if normalized in {"true", "1", "yes", "verified", "match", "matched", "success"}:
-            return True
-        if normalized in {"false", "0", "no", "failed", "mismatch", "not_matched"}:
-            return False
-
-    message = _read_message(payload).lower()
-    if any(token in message for token in ["mismatch", "not match", "failed", "rejected"]):
-        return False
-    if any(token in message for token in ["verified", "matched", "success", "enrolled"]):
+    if decision in {"accept", "accepted", "approved", "match", "matched", "verified", "success"}:
         return True
+    if decision in {"reject", "rejected", "failed", "mismatch", "deny", "denied"}:
+        return False
 
-    return True
+    if status in {"ok", "success", "verified", "approved"}:
+        return True
+    if status in {"failed", "error", "rejected", "denied"}:
+        return False
+
+    if similarity_score is not None and threshold is not None:
+        return similarity_score >= threshold
+
+    return None
 
 
 def enroll_face(user_id, image_path, device_id="mobile-app"):
@@ -507,24 +514,31 @@ def _verify_face_with_retries(user_id, image_path):
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
     payload = _call_kyc_verify_endpoint(id_document_path, selfie_path)
 
-    verified_score = _normalize_percent(_read_score(payload))
+    similarity_score = _normalize_percent(_read_similarity_score(payload))
+    liveness_score = _normalize_percent(_read_liveness_score(payload))
+    confidence_score = _normalize_percent(_read_confidence_score(payload))
+    risk_score = _normalize_percent(_read_risk_score(payload))
+    similarity_threshold = _normalize_percent(_read_similarity_threshold(payload))
+    liveness_threshold = _normalize_percent(_read_liveness_threshold(payload))
     verified_message = _read_message(payload) or ""
     face_detected = _payload_face_detected(
         payload,
-        message=verified_message,
-        score=verified_score,
+        similarity_score=similarity_score,
+        liveness_score=liveness_score,
+        confidence_score=confidence_score,
     )
-    explicit_match = _payload_indicates_match(payload)
+    explicit_match = _payload_indicates_match(
+        payload,
+        similarity_score=similarity_score,
+        threshold=similarity_threshold or SELFIE_MATCH_THRESHOLD,
+    )
+
+    effective_threshold = similarity_threshold or SELFIE_MATCH_THRESHOLD
 
     eligible = bool(
-        face_detected is True
-        and (
-            explicit_match is True
-            or (
-                verified_score is not None
-                and verified_score >= SELFIE_MATCH_THRESHOLD
-            )
-        )
+        similarity_score is not None
+        and similarity_score >= effective_threshold
+        and explicit_match is not False
     )
 
     if face_detected is False and not verified_message:
@@ -537,10 +551,10 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
     return {
         "provider": "nova_kyc_verify",
         "status": "VERIFIED" if eligible else "FAILED",
-        "score": verified_score,
+        "score": similarity_score,
         "face_detected": face_detected,
         "eligible": eligible,
-        "threshold": SELFIE_MATCH_THRESHOLD,
+        "threshold": effective_threshold,
         "message": verified_message,
         "reference": _read_reference(payload),
         "raw_payload": {
@@ -548,9 +562,17 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
             "assessment": {
                 "face_detected": face_detected,
                 "eligible": eligible,
-                "threshold": SELFIE_MATCH_THRESHOLD,
-                "score": verified_score,
+                "threshold": effective_threshold,
+                "score": similarity_score,
                 "matched": explicit_match,
+                "decision": _read_first(payload, "decision"),
+                "provider_status": _read_first(payload, "status"),
+                "similarity_score": similarity_score,
+                "liveness_score": liveness_score,
+                "confidence_score": confidence_score,
+                "risk_score": risk_score,
+                "similarity_threshold": effective_threshold,
+                "liveness_threshold": liveness_threshold,
             },
         },
     }
