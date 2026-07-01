@@ -160,7 +160,7 @@ def _is_valid_topup_phone(provider, phone):
     prefixes = {
         "MAURITEL": {"4"},
         "MATTEL": {"3"},
-        "CHINGUITEL": {"3"},
+        "CHINGUITEL": {"2"},
     }
     return phone[0] in prefixes.get(provider, set())
 
@@ -356,7 +356,7 @@ def create_transaction(request):
                 (
                     "Le numero de recharge est invalide pour cet operateur. "
                     "Il doit contenir 8 chiffres. Mauritel commence par 4, "
-                    "Mattel par 3 et Chinguitel par 3."
+                    "Mattel par 3 et Chinguitel par 2."
                 ),
                 400,
             )
