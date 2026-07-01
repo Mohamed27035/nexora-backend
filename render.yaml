@@ -30,13 +30,13 @@ services:
       - key: NOVA_OCR_BASE_URL
         value: "http://51.20.136.48:8000"
       - key: NOVA_OCR_API_KEY
-        value: "nova_key_3aa656e2bac2ea102ec2c56c196bcf6d"
+        sync: false
       - key: NOVA_OCR_TIMEOUT
         value: "45"
       - key: NOVA_BIOMETRIC_BASE_URL
         value: "http://51.20.136.48:8000"
       - key: NOVA_BIOMETRIC_API_KEY
-        value: "nova_key_3aa656e2bac2ea102ec2c56c196bcf6d"
+        sync: false
       - key: NOVA_BIOMETRIC_TIMEOUT
         value: "45"
       - key: RSS_SOC_APP_NAME
