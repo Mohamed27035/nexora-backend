@@ -88,22 +88,27 @@ def _clear_user_otp(user):
     )
 
 
-def _set_email_otp(email, otp):
+def _set_email_otp(email, otp, purpose="generic", payload=None):
 
     EmailVerificationOTP.objects.update_or_create(
         email=email,
         defaults={
             "otp_code": otp,
             "otp_created_at": timezone.now(),
+            "purpose": purpose,
+            "payload": payload or {},
         }
     )
 
 
-def _get_email_otp_entry(email):
+def _get_email_otp_entry(email, purpose=None):
 
-    return EmailVerificationOTP.objects.filter(
+    queryset = EmailVerificationOTP.objects.filter(
         email=email
-    ).first()
+    )
+    if purpose:
+        queryset = queryset.filter(purpose=purpose)
+    return queryset.first()
 
 
 def _is_email_otp_valid(entry, otp):
@@ -128,6 +133,43 @@ def _clear_email_otp(entry):
 
     if entry:
         entry.delete()
+
+
+def _validate_registration_payload(data):
+    nom = str(data.get("nom", "")).strip()
+    prenom = str(data.get("prenom", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    telephone = _normalize_phone(data.get("telephone", ""))
+    password = str(data.get("password", ""))
+
+    if not nom or "@" not in email:
+        return None, "Vérifiez le nom et l'email."
+
+    if not prenom:
+        return None, "Vérifiez le prénom."
+
+    if not _is_valid_mauritanian_phone(telephone):
+        return None, (
+            "Numéro de téléphone invalide. Il doit contenir 8 chiffres "
+            "et commencer par 2, 3 ou 4."
+        )
+
+    if len(password) < 6:
+        return None, "Le mot de passe doit contenir au moins 6 caractères."
+
+    if Utilisateur.objects.filter(email=email).exists():
+        return None, "Email already exists"
+
+    if Utilisateur.objects.filter(telephone=telephone).exists():
+        return None, "Ce numéro de téléphone est déjà utilisé."
+
+    return {
+        "nom": nom,
+        "prenom": prenom,
+        "email": email,
+        "telephone": telephone,
+        "password_hash": make_password(password),
+    }, None
 
 
 def _nova_sso_is_configured():
@@ -1117,7 +1159,8 @@ def send_welcome_otp(request):
         otp = _generate_otp()
         _set_email_otp(
             email,
-            otp
+            otp,
+            purpose="welcome",
         )
         user_exists = Utilisateur.objects.filter(
             email=email
@@ -1204,6 +1247,78 @@ def send_welcome_otp(request):
         }, status=500)
 
 @api_view(['POST'])
+def send_register_otp(request):
+
+    try:
+
+        payload, validation_error = _validate_registration_payload(request.data)
+
+        if validation_error:
+            return Response({"error": validation_error}, status=400)
+
+        otp = _generate_otp()
+        _set_email_otp(
+            payload["email"],
+            otp,
+            purpose="register",
+            payload=payload,
+        )
+
+        demo_payload = None
+
+        if settings.DEMO_OTP_MODE:
+            demo_payload = {
+                "message": "OTP generated in demo mode",
+                "demo_mode": True,
+                "otp": otp,
+            }
+
+            if not has_email_provider_configured():
+                return Response(demo_payload)
+
+        try:
+            send_system_email(
+                to_email=payload["email"],
+                subject="Confirmation de création de compte",
+                message=f"Votre code OTP est : {otp}",
+                html_message=(
+                    f"<div style='font-family:Arial,sans-serif'>"
+                    f"<h2>Confirmation de compte Nexora</h2>"
+                    f"<p>Utilisez ce code pour finaliser la création de votre compte :</p>"
+                    f"<p style='font-size:28px;font-weight:bold;letter-spacing:4px;'>{otp}</p>"
+                    f"</div>"
+                ),
+            )
+        except EmailServiceError as e:
+            return Response(
+                {
+                    "error": "OTP email service unavailable",
+                    "details": str(e),
+                },
+                status=503,
+            )
+
+        if demo_payload is not None:
+            demo_payload["message"] = "OTP sent and returned in demo mode"
+            return Response(demo_payload)
+
+        return Response(
+            {
+                "message": "OTP envoyé pour confirmer la création du compte.",
+                "email": payload["email"],
+            }
+        )
+
+    except Exception as e:
+
+        return Response({
+
+            "error":
+            str(e)
+
+        }, status=500)
+
+@api_view(['POST'])
 def verify_welcome_otp(request):
 
     try:
@@ -1218,7 +1333,8 @@ def verify_welcome_otp(request):
         )
 
         otp_entry = _get_email_otp_entry(
-            email
+            email,
+            purpose="welcome",
         )
 
         is_valid, validation_error = _is_email_otp_valid(
@@ -1249,6 +1365,93 @@ def verify_welcome_otp(request):
                 email=email
             ).exists()
 
+        })
+
+    except Exception as e:
+
+        return Response({
+
+            "error":
+            str(e)
+
+        }, status=500)
+
+
+@api_view(['POST'])
+def verify_register_otp(request):
+
+    try:
+
+        email = request.data.get(
+            "email",
+            ""
+        ).strip().lower()
+
+        otp = request.data.get(
+            "otp"
+        )
+
+        otp_entry = _get_email_otp_entry(
+            email,
+            purpose="register",
+        )
+
+        is_valid, validation_error = _is_email_otp_valid(
+            otp_entry,
+            otp
+        )
+
+        if not is_valid:
+
+            return Response({
+
+                "error":
+                validation_error
+
+            }, status=400)
+
+        payload = dict(getattr(otp_entry, "payload", {}) or {})
+        nom = str(payload.get("nom", "")).strip()
+        prenom = str(payload.get("prenom", "")).strip()
+        telephone = _normalize_phone(payload.get("telephone", ""))
+        password_hash = str(payload.get("password_hash", "")).strip()
+
+        if not nom or "@" not in email or not telephone or not password_hash:
+            return Response(
+                {"error": "Les données d'inscription temporaires sont incomplètes."},
+                status=400,
+            )
+
+        if Utilisateur.objects.filter(email=email).exists():
+            _clear_email_otp(otp_entry)
+            return Response({"error": "Email already exists"}, status=400)
+
+        if Utilisateur.objects.filter(telephone=telephone).exists():
+            _clear_email_otp(otp_entry)
+            return Response({"error": "Ce numéro de téléphone est déjà utilisé."}, status=400)
+
+        role = "ADMIN" if not Utilisateur.objects.filter(role="ADMIN").exists() else "CLIENT"
+
+        user = Utilisateur.objects.create(
+            nom=nom,
+            prenom=prenom,
+            telephone=telephone,
+            email=email,
+            password=password_hash,
+            role=role,
+            is_verified=(role == "ADMIN"),
+            is_suspended=False,
+            is_banned=False,
+        )
+
+        _clear_email_otp(
+            otp_entry
+        )
+
+        return Response({
+            "message": "Compte créé avec succès.",
+            "id": user.id,
+            "role": user.role,
         })
 
     except Exception as e:

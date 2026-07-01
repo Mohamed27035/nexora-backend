@@ -8,6 +8,8 @@ from .views import (
     verify_otp,
     send_welcome_otp,
     verify_welcome_otp,
+    send_register_otp,
+    verify_register_otp,
     sso_nova,
     sso_nova_debug,
     sso_nova_callback,
@@ -49,6 +51,16 @@ urlpatterns = [
     path(
         'verify-welcome-otp/',
         verify_welcome_otp
+    ),
+
+    path(
+        'send-register-otp/',
+        send_register_otp
+    ),
+
+    path(
+        'verify-register-otp/',
+        verify_register_otp
     ),
 
     path(

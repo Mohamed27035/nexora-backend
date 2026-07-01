@@ -57,5 +57,9 @@ class EmailVerificationOTP(models.Model):
 
     otp_created_at = models.DateTimeField()
 
+    purpose = models.CharField(max_length=30, default="generic")
+
+    payload = models.JSONField(default=dict, blank=True)
+
     def __str__(self):
         return self.email
