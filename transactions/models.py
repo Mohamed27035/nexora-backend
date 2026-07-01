@@ -15,6 +15,14 @@ class Transaction(models.Model):
         ('WITHDRAW', 'Withdraw'),
 
         ('TRANSFER', 'Transfer'),
+
+        ('TOPUP', 'Top Up'),
+    ]
+
+    SERVICE_PROVIDER_CHOICES = [
+        ('MAURITEL', 'Mauritel'),
+        ('MATTEL', 'Mattel'),
+        ('CHINGUITEL', 'Chinguitel'),
     ]
 
     # ==========================
@@ -93,6 +101,19 @@ class Transaction(models.Model):
         blank=True,
 
         null=True
+    )
+
+    service_provider = models.CharField(
+        max_length=20,
+        choices=SERVICE_PROVIDER_CHOICES,
+        blank=True,
+        null=True,
+    )
+
+    service_phone = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
     )
 
     # ==========================

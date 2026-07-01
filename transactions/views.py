@@ -21,6 +21,7 @@ ALLOWED_TRANSACTION_TYPES = {
     "DEPOSIT",
     "WITHDRAW",
     "TRANSFER",
+    "TOPUP",
 }
 
 REVIEWER_ROLES = {
@@ -40,6 +41,16 @@ HIGH_RISK_AMOUNT = Decimal("10000.00")
 VERIFIED_DAILY_LIMIT = Decimal("30000.00")
 UNVERIFIED_DAILY_LIMIT = Decimal("5000.00")
 MULTI_TRANSFER_THRESHOLD = 4
+TOPUP_DENOMINATIONS = {
+    Decimal("10.00"),
+    Decimal("50.00"),
+    Decimal("100.00"),
+    Decimal("200.00"),
+    Decimal("300.00"),
+    Decimal("500.00"),
+    Decimal("1000.00"),
+    Decimal("2000.00"),
+}
 
 
 def _error(message, status_code=400):
@@ -132,6 +143,14 @@ def _find_receiver(data):
         return Utilisateur.objects.filter(email=receiver_email).first()
 
     return None
+
+
+def _normalize_service_phone(value):
+    return "".join(ch for ch in str(value or "").strip() if ch.isdigit())
+
+
+def _normalize_service_provider(value):
+    return str(value or "").strip().upper()
 
 
 def _can_initiate_financial_transaction(user):
@@ -255,6 +274,14 @@ def _apply_transaction_effect(transaction):
         receiver.save(update_fields=["balance"])
         return
 
+    if transaction.type == "TOPUP":
+        current_balance = Decimal(str(sender.balance))
+        if current_balance < amount:
+            raise ValueError("Solde insuffisant")
+        sender.balance = float(current_balance - amount)
+        sender.save(update_fields=["balance"])
+        return
+
     raise ValueError("Type de transaction invalide")
 
 
@@ -302,6 +329,38 @@ def create_transaction(request):
         if Decimal(str(user.balance)) < amount:
             return _error("Solde insuffisant", 400)
         data["receiver"] = receiver.id
+    elif transaction_type == "TOPUP":
+        service_provider = _normalize_service_provider(data.get("service_provider"))
+        service_phone = _normalize_service_phone(data.get("service_phone"))
+        allowed_providers = {
+            choice[0] for choice in Transaction.SERVICE_PROVIDER_CHOICES
+        }
+
+        if service_provider not in allowed_providers:
+            return _error("Operateur de recharge invalide", 400)
+
+        if len(service_phone) != 8 or service_phone[0] not in {"2", "3", "4"}:
+            return _error(
+                "Le numero de recharge doit contenir 8 chiffres et commencer par 2, 3 ou 4",
+                400,
+            )
+
+        if amount not in TOPUP_DENOMINATIONS:
+            allowed_values = ", ".join(
+                str(int(value)) if value == value.to_integral() else str(value)
+                for value in sorted(TOPUP_DENOMINATIONS)
+            )
+            return _error(
+                f"Montant de recharge invalide. Valeurs autorisees: {allowed_values} MRU.",
+                400,
+            )
+
+        if Decimal(str(user.balance)) < amount:
+            return _error("Solde insuffisant", 400)
+
+        data["service_provider"] = service_provider
+        data["service_phone"] = service_phone
+        data.pop("receiver", None)
     else:
         data.pop("receiver", None)
 
@@ -337,7 +396,7 @@ def create_transaction(request):
         risk_score=anomaly_snapshot["risk_score"],
     )
 
-    if transaction.type == "TRANSFER":
+    if transaction.type in {"TRANSFER", "TOPUP"}:
         with db_transaction.atomic():
             try:
                 _apply_transaction_effect(transaction)
@@ -346,7 +405,11 @@ def create_transaction(request):
                 return _error(str(exc), 400)
 
             transaction.status = "APPROVED"
-            transaction.validation_note = "Auto-approved transfer"
+            transaction.validation_note = (
+                "Auto-approved transfer"
+                if transaction.type == "TRANSFER"
+                else "Auto-approved mobile top-up"
+            )
             transaction.review_stage = "FINALIZED"
             transaction.receipt_reference = _generate_receipt_reference(transaction)
             transaction.save(
@@ -374,7 +437,9 @@ def create_transaction(request):
                 "amount": str(transaction.montant),
                 "sender_id": transaction.sender_id,
                 "receiver_id": transaction.receiver_id,
-                "mode": "AUTO_TRANSFER",
+                "service_provider": transaction.service_provider or "",
+                "service_phone": transaction.service_phone or "",
+                "mode": "AUTO_TRANSFER" if transaction.type == "TRANSFER" else "AUTO_TOPUP",
                 "risk_score": transaction.risk_score,
                 "anomaly_detected": transaction.anomaly_detected,
                 "anomaly_reason": transaction.anomaly_reason or "",
@@ -396,7 +461,9 @@ def create_transaction(request):
                 "amount": str(transaction.montant),
                 "sender_id": transaction.sender_id,
                 "receiver_id": transaction.receiver_id,
-                "mode": "AUTO_TRANSFER",
+                "service_provider": transaction.service_provider or "",
+                "service_phone": transaction.service_phone or "",
+                "mode": "AUTO_TRANSFER" if transaction.type == "TRANSFER" else "AUTO_TOPUP",
                 "validation_note": transaction.validation_note or "",
                 "risk_score": transaction.risk_score,
                 "anomaly_detected": transaction.anomaly_detected,
@@ -404,10 +471,21 @@ def create_transaction(request):
             },
         )
 
-        create_notification(
-            user,
-            f"Votre transfert de {transaction.montant} MRU a ete execute avec succes.",
-        )
+        if transaction.type == "TRANSFER":
+            create_notification(
+                user,
+                f"Votre transfert de {transaction.montant} MRU a ete execute avec succes.",
+            )
+        else:
+            create_notification(
+                user,
+                (
+                    f"Votre recharge {transaction.service_provider or ''} de "
+                    f"{transaction.montant} MRU vers {transaction.service_phone or '-'} "
+                    f"a ete executee avec succes."
+                ),
+            )
+
         if transaction.receiver:
             create_notification(
                 transaction.receiver,
@@ -416,7 +494,11 @@ def create_transaction(request):
 
         return Response(
         {
-            "message": "Transfert execute avec succes.",
+            "message": (
+                "Transfert execute avec succes."
+                if transaction.type == "TRANSFER"
+                else "Recharge executee avec succes."
+            ),
             "transaction": _serialize_transaction(transaction, request),
         },
         status=status.HTTP_201_CREATED,
@@ -437,6 +519,8 @@ def create_transaction(request):
             "amount": str(transaction.montant),
             "sender_id": transaction.sender_id,
             "receiver_id": transaction.receiver_id,
+            "service_provider": transaction.service_provider or "",
+            "service_phone": transaction.service_phone or "",
             "review_stage": transaction.review_stage,
             "requires_admin_approval": transaction.requires_admin_approval,
             "risk_score": transaction.risk_score,
@@ -525,6 +609,8 @@ def get_transactions(request):
             | Q(receiver__telephone__icontains=search)
             | Q(type__icontains=search)
             | Q(status__icontains=search)
+            | Q(service_provider__icontains=search)
+            | Q(service_phone__icontains=search)
             | Q(note__icontains=search)
             | Q(validation_note__icontains=search)
         )
@@ -533,6 +619,7 @@ def get_transactions(request):
             search_query |= (
                 Q(sender__telephone__icontains=normalized_phone)
                 | Q(receiver__telephone__icontains=normalized_phone)
+                | Q(service_phone__icontains=normalized_phone)
             )
 
         if search.isdigit():

@@ -64,6 +64,8 @@ class TransactionSerializer(serializers.ModelSerializer):
             "type",
             "status",
             "note",
+            "service_provider",
+            "service_phone",
             "proof",
             "proof_url",
             "validation_note",
@@ -161,6 +163,8 @@ class TransactionSerializer(serializers.ModelSerializer):
         receiver = data.get("receiver")
         sender = data.get("sender")
         montant = data.get("montant")
+        service_provider = str(data.get("service_provider") or "").strip().upper()
+        service_phone = "".join(ch for ch in str(data.get("service_phone") or "").strip() if ch.isdigit())
 
         if montant is None or montant <= 0:
             raise serializers.ValidationError("Montant invalide")
@@ -177,6 +181,21 @@ class TransactionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"{transaction_type.title()} ne doit pas avoir de destinataire"
             )
+
+        if transaction_type == "TOPUP":
+            allowed_providers = {
+                choice[0] for choice in Transaction.SERVICE_PROVIDER_CHOICES
+            }
+            if receiver:
+                raise serializers.ValidationError(
+                    "La recharge mobile ne doit pas avoir de destinataire utilisateur"
+                )
+            if service_provider not in allowed_providers:
+                raise serializers.ValidationError("Operateur invalide")
+            if len(service_phone) != 8 or service_phone[0] not in {"2", "3", "4"}:
+                raise serializers.ValidationError("Numero de recharge invalide")
+            data["service_provider"] = service_provider
+            data["service_phone"] = service_phone
 
         return data
 
