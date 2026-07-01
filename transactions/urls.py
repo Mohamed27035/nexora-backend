@@ -9,6 +9,8 @@ from .views import (
     approve_transaction,
 
     reject_transaction,
+    beneficiaries,
+    delete_beneficiary,
 )
 
 
@@ -60,5 +62,17 @@ urlpatterns = [
         reject_transaction,
 
         name="reject_transaction"
+    ),
+
+    path(
+        "beneficiaries/",
+        beneficiaries,
+        name="beneficiaries"
+    ),
+
+    path(
+        "beneficiaries/<int:beneficiary_id>/",
+        delete_beneficiary,
+        name="delete_beneficiary"
     ),
 ]

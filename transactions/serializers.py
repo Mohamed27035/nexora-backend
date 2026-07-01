@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Transaction
+from .models import Beneficiary, Transaction
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -37,6 +37,11 @@ class TransactionSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     validated_by_full_name = serializers.SerializerMethodField()
+    accountant_validated_by_name = serializers.CharField(
+        source="accountant_validated_by.nom",
+        read_only=True,
+    )
+    accountant_validated_by_full_name = serializers.SerializerMethodField()
     proof_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -65,16 +70,34 @@ class TransactionSerializer(serializers.ModelSerializer):
             "validated_by",
             "validated_by_name",
             "validated_by_full_name",
+            "accountant_validated_by",
+            "accountant_validated_by_name",
+            "accountant_validated_by_full_name",
+            "accountant_validation_note",
+            "review_stage",
+            "requires_admin_approval",
+            "anomaly_detected",
+            "anomaly_reason",
+            "risk_score",
+            "receipt_reference",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
             "status",
             "validated_by",
+            "accountant_validated_by",
             "validation_note",
+            "accountant_validation_note",
             "created_at",
             "updated_at",
             "proof_url",
+            "review_stage",
+            "requires_admin_approval",
+            "anomaly_detected",
+            "anomaly_reason",
+            "risk_score",
+            "receipt_reference",
         ]
         extra_kwargs = {
             "proof": {"required": False, "allow_null": True},
@@ -95,6 +118,9 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     def get_validated_by_full_name(self, obj):
         return self._full_name(obj.validated_by)
+
+    def get_accountant_validated_by_full_name(self, obj):
+        return self._full_name(obj.accountant_validated_by)
 
     def _display_identity(self, user):
         if not user:
@@ -153,3 +179,42 @@ class TransactionSerializer(serializers.ModelSerializer):
             )
 
         return data
+
+
+class BeneficiarySerializer(serializers.ModelSerializer):
+    beneficiary_name = serializers.CharField(source="beneficiary.nom", read_only=True)
+    beneficiary_prenom = serializers.CharField(source="beneficiary.prenom", read_only=True)
+    beneficiary_email = serializers.CharField(source="beneficiary.email", read_only=True)
+    beneficiary_phone = serializers.CharField(source="beneficiary.telephone", read_only=True)
+    beneficiary_full_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Beneficiary
+        fields = [
+            "id",
+            "owner",
+            "beneficiary",
+            "nickname",
+            "beneficiary_name",
+            "beneficiary_prenom",
+            "beneficiary_email",
+            "beneficiary_phone",
+            "beneficiary_full_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "owner",
+            "created_at",
+            "beneficiary_name",
+            "beneficiary_prenom",
+            "beneficiary_email",
+            "beneficiary_phone",
+            "beneficiary_full_name",
+        ]
+
+    def get_beneficiary_full_name(self, obj):
+        if not obj.beneficiary:
+            return ""
+        return " ".join(
+            part for part in [obj.beneficiary.nom, obj.beneficiary.prenom or ""] if part
+        ).strip()

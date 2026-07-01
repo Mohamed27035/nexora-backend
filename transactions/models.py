@@ -24,8 +24,21 @@ class Transaction(models.Model):
 
         ('PENDING', 'Pending'),
 
+        ('SUBMITTED', 'Submitted'),
+
+        ('ACCOUNTANT_APPROVED', 'Accountant Approved'),
+
         ('APPROVED', 'Approved'),
 
+        ('REJECTED', 'Rejected'),
+    ]
+
+    REVIEW_STAGE_CHOICES = [
+        ('AUTO', 'Auto'),
+        ('SUBMITTED', 'Submitted'),
+        ('ACCOUNTANT_REVIEW', 'Accountant Review'),
+        ('ADMIN_REVIEW', 'Admin Review'),
+        ('FINALIZED', 'Finalized'),
         ('REJECTED', 'Rejected'),
     ]
 
@@ -104,6 +117,46 @@ class Transaction(models.Model):
 
         null=True
     )
+
+    accountant_validated_by = models.ForeignKey(
+
+        Utilisateur,
+
+        on_delete=models.SET_NULL,
+
+        null=True,
+
+        blank=True,
+
+        related_name="accountant_validated_transactions"
+    )
+
+    accountant_validation_note = models.TextField(
+
+        blank=True,
+
+        null=True
+    )
+
+    review_stage = models.CharField(
+
+        max_length=30,
+
+        choices=REVIEW_STAGE_CHOICES,
+
+        default="SUBMITTED"
+    )
+
+    requires_admin_approval = models.BooleanField(default=False)
+
+    anomaly_detected = models.BooleanField(default=False)
+
+    anomaly_reason = models.TextField(blank=True, null=True)
+
+    risk_score = models.FloatField(default=0)
+
+    receipt_reference = models.CharField(max_length=120, blank=True, null=True)
+
     proof = models.FileField(
 
     upload_to="transactions/",
@@ -133,3 +186,25 @@ class Transaction(models.Model):
             f"{self.type} - "
             f"{self.montant}"
         )
+
+
+class Beneficiary(models.Model):
+    owner = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name="beneficiaries",
+    )
+    beneficiary = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name="beneficiary_of",
+    )
+    nickname = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("owner", "beneficiary")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.owner_id}->{self.beneficiary_id}"
