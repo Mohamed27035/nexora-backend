@@ -153,6 +153,18 @@ def _normalize_service_provider(value):
     return str(value or "").strip().upper()
 
 
+def _is_valid_topup_phone(provider, phone):
+    if len(phone) != 8:
+        return False
+
+    prefixes = {
+        "MAURITEL": {"4"},
+        "MATTEL": {"3"},
+        "CHINGUITEL": {"3"},
+    }
+    return phone[0] in prefixes.get(provider, set())
+
+
 def _can_initiate_financial_transaction(user):
     return getattr(user, "role", "").upper() == "CLIENT"
 
@@ -339,9 +351,13 @@ def create_transaction(request):
         if service_provider not in allowed_providers:
             return _error("Operateur de recharge invalide", 400)
 
-        if len(service_phone) != 8 or service_phone[0] not in {"2", "3", "4"}:
+        if not _is_valid_topup_phone(service_provider, service_phone):
             return _error(
-                "Le numero de recharge doit contenir 8 chiffres et commencer par 2, 3 ou 4",
+                (
+                    "Le numero de recharge est invalide pour cet operateur. "
+                    "Il doit contenir 8 chiffres. Mauritel commence par 4, "
+                    "Mattel par 3 et Chinguitel par 3."
+                ),
                 400,
             )
 

@@ -3,6 +3,18 @@ from rest_framework import serializers
 from .models import Beneficiary, Transaction
 
 
+def _is_valid_topup_phone(provider, phone):
+    if len(phone) != 8:
+        return False
+
+    prefixes = {
+        "MAURITEL": {"4"},
+        "MATTEL": {"3"},
+        "CHINGUITEL": {"3"},
+    }
+    return phone[0] in prefixes.get(provider, set())
+
+
 class TransactionSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(
         source="sender.nom",
@@ -192,8 +204,10 @@ class TransactionSerializer(serializers.ModelSerializer):
                 )
             if service_provider not in allowed_providers:
                 raise serializers.ValidationError("Operateur invalide")
-            if len(service_phone) != 8 or service_phone[0] not in {"2", "3", "4"}:
-                raise serializers.ValidationError("Numero de recharge invalide")
+            if not _is_valid_topup_phone(service_provider, service_phone):
+                raise serializers.ValidationError(
+                    "Numero de recharge invalide pour l'operateur selectionne"
+                )
             data["service_provider"] = service_provider
             data["service_phone"] = service_phone
 
