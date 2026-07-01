@@ -317,7 +317,7 @@ def check_selfie(request):
             selfie_path=selfie_path,
             device_id="nexora-kyc-precheck",
         )
-        allowed, reason, summary = _validate_selfie_requirement_from_result(result)
+        allowed, reason, summary = _validate_selfie_requirement_from_result_v2(result)
         return Response(
             {
                 "allowed": allowed,
@@ -703,7 +703,7 @@ def _backfill_ocr_fields_from_text(kyc):
 def _validate_selfie_requirement_from_result(result):
     face_detected = result.get("face_detected")
     confidence = result.get("score")
-    threshold = result.get("threshold", 50.0)
+    threshold = result.get("threshold", 60.0)
     eligible = bool(result.get("eligible"))
     message = str(result.get("message", "") or "").strip()
     status = str(result.get("status", "") or "").strip().upper()
@@ -775,6 +775,57 @@ def _validate_selfie_requirement_from_result(result):
         "eligible": eligible,
         "message": message,
         "manual_review_required": False,
+    }
+
+
+def _validate_selfie_requirement_from_result_v2(result):
+    face_detected = result.get("face_detected")
+    confidence = result.get("score")
+    threshold = result.get("threshold", 60.0)
+    eligible = bool(result.get("eligible"))
+    message = str(result.get("message", "") or "").strip()
+    status = str(result.get("status", "") or "").strip().upper()
+
+    if face_detected is False:
+        return False, "Aucun visage humain n'a ete detecte dans le selfie.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "status": status,
+        }
+
+    if confidence is None:
+        return False, "La comparaison biometrique n'a pas pu calculer un score fiable.", {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "status": status,
+        }
+
+    if confidence < threshold or not eligible or status == "ERROR":
+        return False, (
+            f"Le selfie ne peut pas etre valide automatiquement. "
+            f"Le score obtenu est {confidence}% et le seuil requis est {threshold}%."
+        ), {
+            "face_detected": face_detected,
+            "confidence": confidence,
+            "threshold": threshold,
+            "eligible": eligible,
+            "message": message,
+            "status": status,
+        }
+
+    return True, "", {
+        "face_detected": face_detected,
+        "confidence": confidence,
+        "threshold": threshold,
+        "eligible": eligible,
+        "message": message,
+        "status": status,
     }
 
 

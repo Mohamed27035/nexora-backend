@@ -2,6 +2,7 @@ import json
 import hashlib
 import os
 import tempfile
+import base64
 from pathlib import Path
 
 import requests
@@ -38,6 +39,25 @@ def _timeout():
     )
 
 
+def _match_threshold():
+    try:
+        value = float(
+            getattr(settings, "NOVA_BIOMETRIC_MATCH_THRESHOLD", SELFIE_MATCH_THRESHOLD)
+            or SELFIE_MATCH_THRESHOLD
+        )
+    except Exception:
+        value = SELFIE_MATCH_THRESHOLD
+    return max(0.0, min(100.0, value))
+
+
+def _tenant_id():
+    return (
+        getattr(settings, "NOVA_BIOMETRIC_TENANT_ID", "").strip()
+        or getattr(settings, "NOVA_OCR_TENANT_ID", "").strip()
+        or "nexora"
+    )
+
+
 def _coerce_payload(raw_payload):
     if isinstance(raw_payload, dict):
         return raw_payload
@@ -55,6 +75,34 @@ def _coerce_payload(raw_payload):
             return {"message": stripped}
 
     return {"payload": raw_payload}
+
+
+def _read_error_text(raw_payload):
+    payload = _coerce_payload(raw_payload)
+    if not isinstance(payload, dict):
+        return str(raw_payload or "").strip()
+
+    detail = payload.get("detail")
+    if isinstance(detail, list):
+        parts = []
+        for item in detail:
+            if isinstance(item, dict):
+                piece = str(item.get("msg") or item.get("message") or "").strip()
+                if piece:
+                    parts.append(piece)
+            elif item not in [None, ""]:
+                parts.append(str(item).strip())
+        if parts:
+            return " | ".join(parts)
+    if detail not in [None, ""]:
+        return str(detail).strip()
+
+    for key in ["message", "error", "description", "status", "result"]:
+        value = payload.get(key)
+        if value not in [None, ""]:
+            return str(value).strip()
+
+    return str(raw_payload or "").strip()
 
 
 def _build_biometric_subject(user_id, id_document_path):
@@ -132,44 +180,43 @@ def _guess_mime_type(file_path):
     return "image/jpeg"
 
 
+def _encode_image_base64(file_path):
+    with open(file_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")
+
+
 def _call_kyc_verify_endpoint(id_document_path, selfie_path):
-    endpoint = f"{_base_url().rstrip('/')}/kyc/verify"
+    endpoint = f"{_base_url().rstrip('/')}/api/kyc/face/verify"
+    payload = {
+        "document_image": _encode_image_base64(id_document_path),
+        "selfie_image": _encode_image_base64(selfie_path),
+        "perform_liveness": True,
+        "tenant_id": _tenant_id(),
+    }
 
-    with open(id_document_path, "rb") as id_image, open(selfie_path, "rb") as selfie_image:
-        files = {
-            "image1": (
-                Path(id_document_path).name,
-                id_image,
-                _guess_mime_type(id_document_path),
-            ),
-            "image2": (
-                Path(selfie_path).name,
-                selfie_image,
-                _guess_mime_type(selfie_path),
-            ),
-        }
-
-        response = requests.post(
-            endpoint,
-            headers={
-                "Accept": "application/json",
-                "Secure-Nova-Key": _api_key(),
-            },
-            files=files,
-            timeout=_timeout(),
-        )
-
-    if response.status_code >= 400:
-        raise RuntimeError(
-            f"Biometric API error ({response.status_code}): {response.text[:500]}"
-        )
+    response = requests.post(
+        endpoint,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Secure-Nova-Key": _api_key(),
+        },
+        json=payload,
+        timeout=_timeout(),
+    )
 
     try:
-        payload = response.json()
+        parsed_payload = response.json()
     except Exception:
-        payload = response.text
+        parsed_payload = response.text
 
-    return _coerce_payload(payload)
+    if response.status_code >= 400:
+        error_text = _read_error_text(parsed_payload)
+        raise RuntimeError(
+            f"Biometric API error ({response.status_code}): {error_text or response.text[:500]}"
+        )
+
+    return _coerce_payload(parsed_payload)
 
 
 def _build_image_variant(original_path, suffix, transform):
@@ -310,19 +357,31 @@ def _read_number(value):
 
 
 def _read_similarity_score(payload):
-    return _read_number(_read_nested(payload, "scores", "similarity_score"))
+    return _read_number(
+        _read_first(payload, "similarity", "score", "similarity_score", "match_score")
+        or _read_nested(payload, "scores", "similarity_score")
+    )
 
 
 def _read_liveness_score(payload):
-    return _read_number(_read_nested(payload, "scores", "liveness_score"))
+    return _read_number(
+        _read_first(payload, "liveness_score", "liveness", "livenessScore")
+        or _read_nested(payload, "scores", "liveness_score")
+    )
 
 
 def _read_confidence_score(payload):
-    return _read_number(_read_nested(payload, "scores", "confidence_score"))
+    return _read_number(
+        _read_first(payload, "confidence_score")
+        or _read_nested(payload, "scores", "confidence_score")
+    )
 
 
 def _read_risk_score(payload):
-    return _read_number(_read_nested(payload, "scores", "risk_score"))
+    return _read_number(
+        _read_first(payload, "risk_score")
+        or _read_nested(payload, "scores", "risk_score")
+    )
 
 
 def _read_similarity_threshold(payload):
@@ -338,7 +397,7 @@ def _read_reference(payload):
         _read_nested(payload, "audit", "request_id")
         or _read_nested(payload, "audit", "user_id")
         or _read_nested(payload, "metadata", "timestamp")
-        or _read_first(payload, "reference", "reference_id")
+        or _read_first(payload, "timestamp", "reference", "reference_id")
     )
     return str(value).strip() if value not in [None, ""] else ""
 
@@ -347,12 +406,18 @@ def _read_message(payload):
     if not isinstance(payload, dict):
         return ""
 
-    direct = _read_first(payload, "message", "detail", "description")
+    direct = _read_first(payload, "message", "detail", "description", "document_quality")
     if direct not in [None, ""]:
         return str(direct).strip()
 
+    verified = payload.get("verified")
     decision = str(_read_first(payload, "decision") or "").strip()
     status = str(_read_first(payload, "status") or "").strip()
+    if verified is True and not decision:
+        decision = "verified"
+    elif verified is False and not decision:
+        decision = "not_verified"
+
     factors = _read_nested(payload, "explainability", "decision_factors")
 
     factor_text = ""
@@ -390,6 +455,13 @@ def _normalize_percent(score_value):
     return max(0.0, min(100.0, round(score, 2)))
 
 
+def _read_score(payload):
+    return _normalize_percent(
+        _read_similarity_score(payload)
+        or _read_confidence_score(payload)
+    )
+
+
 def _payload_face_detected(payload, similarity_score=None, liveness_score=None, confidence_score=None):
     if not isinstance(payload, dict):
         payload = {}
@@ -407,6 +479,9 @@ def _payload_face_detected(payload, similarity_score=None, liveness_score=None, 
     if any(value is not None for value in [similarity_score, liveness_score, confidence_score]):
         return True
 
+    if payload.get("verified") in [True, False]:
+        return True
+
     return None
 
 
@@ -416,6 +491,12 @@ def _payload_indicates_match(payload, similarity_score=None, threshold=None):
 
     decision = str(_read_first(payload, "decision") or "").strip().lower()
     status = str(_read_first(payload, "status") or "").strip().lower()
+    verified = payload.get("verified")
+
+    if verified is True:
+        return True
+    if verified is False:
+        return False
 
     if decision in {"accept", "accepted", "approved", "match", "matched", "verified", "success"}:
         return True
@@ -486,8 +567,7 @@ def _verify_face_with_retries(user_id, image_path):
                 result = verify_face(user_id=user_id, image_path=candidate_path)
                 face_detected = _payload_face_detected(
                     result.get("raw_payload"),
-                    message=result.get("message", ""),
-                    score=_normalize_percent(result.get("score")),
+                    similarity_score=_normalize_percent(result.get("score")),
                 )
                 if face_detected is False:
                     last_error = RuntimeError("No face detected")
@@ -512,7 +592,35 @@ def _verify_face_with_retries(user_id, image_path):
 
 
 def perform_selfie_verification(user_id, id_document_path, selfie_path, device_id="mobile-app"):
-    payload = _call_kyc_verify_endpoint(id_document_path, selfie_path)
+    try:
+        payload = _call_kyc_verify_endpoint(id_document_path, selfie_path)
+    except Exception as error:
+        error_text = str(error or "").strip()
+        lowered = error_text.lower()
+        if any(
+            token in lowered
+            for token in ["no face", "aucun visage", "face not detected", "visage non detecte"]
+        ):
+            return {
+                "provider": "nova_kyc_face_verify",
+                "status": "FAILED",
+                "score": 0.0,
+                "face_detected": False,
+                "eligible": False,
+                "threshold": SELFIE_MATCH_THRESHOLD,
+                "message": "Aucun visage detecte dans le selfie.",
+                "reference": "",
+                "raw_payload": {
+                    "error": error_text,
+                    "assessment": {
+                        "face_detected": False,
+                        "eligible": False,
+                        "threshold": SELFIE_MATCH_THRESHOLD,
+                        "score": 0.0,
+                    },
+                },
+            }
+        raise
 
     similarity_score = _normalize_percent(_read_similarity_score(payload))
     liveness_score = _normalize_percent(_read_liveness_score(payload))
@@ -530,15 +638,17 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
     explicit_match = _payload_indicates_match(
         payload,
         similarity_score=similarity_score,
-        threshold=SELFIE_MATCH_THRESHOLD,
+        threshold=_match_threshold(),
     )
 
-    effective_threshold = SELFIE_MATCH_THRESHOLD
+    effective_threshold = _match_threshold()
 
     eligible = bool(
-        similarity_score is not None
-        and similarity_score >= effective_threshold
-        and face_detected is not False
+        face_detected is not False
+        and (
+            (similarity_score is not None and similarity_score >= effective_threshold)
+            or (similarity_score is None and explicit_match is True)
+        )
     )
 
     if face_detected is False and not verified_message:
@@ -549,7 +659,7 @@ def perform_selfie_verification(user_id, id_document_path, selfie_path, device_i
         verified_message = "La verification automatique de l'identite a echoue."
 
     return {
-        "provider": "nova_kyc_verify",
+        "provider": "nova_kyc_face_verify",
         "status": "VERIFIED" if eligible else "FAILED",
         "score": similarity_score,
         "face_detected": face_detected,
