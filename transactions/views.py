@@ -246,11 +246,7 @@ def _enforce_dynamic_limits(user, amount):
 
 
 def _requires_multi_level(transaction_type, anomaly_detected, amount):
-    if transaction_type in {"DEPOSIT", "WITHDRAW"}:
-        return True
-    if anomaly_detected or amount >= HIGH_RISK_AMOUNT:
-        return True
-    return False
+    return transaction_type == "WITHDRAW"
 
 
 def _apply_transaction_effect(transaction):
@@ -412,7 +408,7 @@ def create_transaction(request):
         risk_score=anomaly_snapshot["risk_score"],
     )
 
-    if transaction.type in {"TRANSFER", "TOPUP"}:
+    if transaction.type in {"TRANSFER", "TOPUP", "DEPOSIT"}:
         with db_transaction.atomic():
             try:
                 _apply_transaction_effect(transaction)
@@ -421,11 +417,12 @@ def create_transaction(request):
                 return _error(str(exc), 400)
 
             transaction.status = "APPROVED"
-            transaction.validation_note = (
-                "Auto-approved transfer"
-                if transaction.type == "TRANSFER"
-                else "Auto-approved mobile top-up"
-            )
+            if transaction.type == "TRANSFER":
+                transaction.validation_note = "Auto-approved transfer"
+            elif transaction.type == "TOPUP":
+                transaction.validation_note = "Auto-approved mobile top-up"
+            else:
+                transaction.validation_note = "Auto-approved deposit"
             transaction.review_stage = "FINALIZED"
             transaction.receipt_reference = _generate_receipt_reference(transaction)
             transaction.save(
@@ -455,7 +452,13 @@ def create_transaction(request):
                 "receiver_id": transaction.receiver_id,
                 "service_provider": transaction.service_provider or "",
                 "service_phone": transaction.service_phone or "",
-                "mode": "AUTO_TRANSFER" if transaction.type == "TRANSFER" else "AUTO_TOPUP",
+                "mode": (
+                    "AUTO_TRANSFER"
+                    if transaction.type == "TRANSFER"
+                    else "AUTO_TOPUP"
+                    if transaction.type == "TOPUP"
+                    else "AUTO_DEPOSIT"
+                ),
                 "risk_score": transaction.risk_score,
                 "anomaly_detected": transaction.anomaly_detected,
                 "anomaly_reason": transaction.anomaly_reason or "",
@@ -479,7 +482,13 @@ def create_transaction(request):
                 "receiver_id": transaction.receiver_id,
                 "service_provider": transaction.service_provider or "",
                 "service_phone": transaction.service_phone or "",
-                "mode": "AUTO_TRANSFER" if transaction.type == "TRANSFER" else "AUTO_TOPUP",
+                "mode": (
+                    "AUTO_TRANSFER"
+                    if transaction.type == "TRANSFER"
+                    else "AUTO_TOPUP"
+                    if transaction.type == "TOPUP"
+                    else "AUTO_DEPOSIT"
+                ),
                 "validation_note": transaction.validation_note or "",
                 "risk_score": transaction.risk_score,
                 "anomaly_detected": transaction.anomaly_detected,
@@ -492,7 +501,7 @@ def create_transaction(request):
                 user,
                 f"Votre transfert de {transaction.montant} MRU a ete execute avec succes.",
             )
-        else:
+        elif transaction.type == "TOPUP":
             create_notification(
                 user,
                 (
@@ -500,6 +509,11 @@ def create_transaction(request):
                     f"{transaction.montant} MRU vers {transaction.service_phone or '-'} "
                     f"a ete executee avec succes."
                 ),
+            )
+        else:
+            create_notification(
+                user,
+                f"Votre depot de {transaction.montant} MRU a ete execute avec succes.",
             )
 
         if transaction.receiver:
@@ -514,6 +528,8 @@ def create_transaction(request):
                 "Transfert execute avec succes."
                 if transaction.type == "TRANSFER"
                 else "Recharge executee avec succes."
+                if transaction.type == "TOPUP"
+                else "Depot execute avec succes."
             ),
             "transaction": _serialize_transaction(transaction, request),
         },
@@ -549,7 +565,7 @@ def create_transaction(request):
         user,
         (
             f"Votre transaction {transaction.type} a ete creee et attend "
-            f"{'une validation comptable puis administrative' if transaction.requires_admin_approval else 'une validation'}."
+            f"{'une validation comptable puis administrative' if transaction.requires_admin_approval else 'une execution automatique'}."
         ),
     )
 
