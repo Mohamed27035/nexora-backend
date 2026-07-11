@@ -72,10 +72,10 @@ def _allowed_recipient_queryset(current_user):
     if role == "ADMIN":
         return Utilisateur.objects.exclude(id=current_user.id)
 
-    if role in {"COMPTABLE", "AUDITEUR"}:
-        return Utilisateur.objects.filter(role__in=["ADMIN", "CLIENT"]).exclude(
-            id=current_user.id
-        )
+    # Non-admin roles exchange operational remarks and support requests
+    # exclusively through the administration channel.
+    if role in {"COMPTABLE", "AUDITEUR", "CLIENT"}:
+        return Utilisateur.objects.filter(role="ADMIN").exclude(id=current_user.id)
 
     return Utilisateur.objects.filter(role="ADMIN").exclude(id=current_user.id)
 
