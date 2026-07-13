@@ -1,0 +1,40 @@
+name: nexora_mobile
+
+description: "Nexora Mobile App"
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  dio: ^5.7.0
+
+  shared_preferences: ^2.3.2
+
+  flutter_secure_storage: ^9.2.2
+
+  provider: ^6.1.2
+
+  image_picker: ^1.1.2
+
+  fl_chart: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  http_parser: ^4.0.2
+  flutter_lints: ^6.0.0
+
+flutter:
+
+  uses-material-design: true
+
+  
